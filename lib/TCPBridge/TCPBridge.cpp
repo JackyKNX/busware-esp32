@@ -7,7 +7,7 @@ static void handleData(void *arg, AsyncClient *client, void *data, size_t len) {
     Serial.printf("data received %d bytes from client %s \r\n", len, client->remoteIP().toString().c_str());
 
     TCPBridge *bridge = (TCPBridge*)(arg);
-    
+
     bridge->transceiver->write( (uint8_t *)data, len ) ;
     bridge->BytesIn += len;
     /*
@@ -26,7 +26,7 @@ static void handleDisconnect(void *arg, AsyncClient *client) {
 
     TCPBridge *bridge = (TCPBridge*)(arg);
 
-    for(uint8_t i = 0; i < MAX_SRV_CLIENTS; i++) 
+    for(uint8_t i = 0; i < MAX_SRV_CLIENTS; i++)
 	if (bridge->clients[i] == client)
 	    bridge->clients[i] = NULL;
 }
@@ -41,7 +41,7 @@ static void handleNewClient(void *arg, AsyncClient *client) {
     TCPBridge *bridge = (TCPBridge*)(arg);
 
     for(uint8_t i = 0; i < MAX_SRV_CLIENTS; i++) {
-	
+
 	if (bridge->clients[i] == NULL) {
 	    bridge->clients[i] = client;
 	    // register events
@@ -51,7 +51,7 @@ static void handleNewClient(void *arg, AsyncClient *client) {
 	    client->onTimeout(&handleTimeOut, bridge);
 	    client->setNoDelay(true);
 	    return;
-	    
+
 	}
     }
 
@@ -79,12 +79,12 @@ void TCPBridge::loop() {
 	// check if all sockets can take this data ...
 	int16_t min = minspace();
 	if (min<0 || min>av) {
-	    
+
 	    transceiver->readBytes( sbuf, av );
-	    
+
 	    if (min>av) {
 		BytesOut += av;
-		
+
 		for(i = 0; i < MAX_SRV_CLIENTS; i++){
 		    if (clients[i] && clients[i]->connected()){
 			clients[i]->add((char *)sbuf, av);
@@ -93,7 +93,7 @@ void TCPBridge::loop() {
 		    }
 		}
 	    }
-	    /*	    
+	    /*
 	    if (ledmode)
 		digitalWrite(LED_BUILTIN, LOW);
 	    previousMillis = currentMillis;

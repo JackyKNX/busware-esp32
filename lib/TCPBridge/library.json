@@ -1,0 +1,7 @@
+{
+    "name": "TCPBridge",
+    "version": "1.0.0",
+    "description": "TCP bridge for busware transceivers",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
