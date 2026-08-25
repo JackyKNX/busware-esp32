@@ -5,8 +5,8 @@ import shutil
 
 APP_BIN = "$BUILD_DIR/${PROGNAME}.bin"
 #MERGED_BIN = "$BUILD_DIR/${PROGNAME}.factory.bin"
-MERGED_BIN = "/share/GIT/busware-esp32/firmware/${PIOENV}.factory.bin"
-OTA_BIN = "/share/GIT/busware-esp32/firmware/${PIOENV}.ota.bin"
+MERGED_BIN = "$PROJECT_DIR/../../firmware/${PIOENV}.factory.bin"
+OTA_BIN = "$PROJECT_DIR/../../firmware/${PIOENV}.ota.bin"
 BOARD_CONFIG = env.BoardConfig()
 
 

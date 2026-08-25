@@ -1,0 +1,7 @@
+{
+    "name": "busware",
+    "version": "1.0.0",
+    "description": "Busware transceiver library",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
