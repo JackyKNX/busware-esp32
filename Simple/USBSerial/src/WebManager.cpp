@@ -139,6 +139,17 @@ void WebManager::startWebServer()
         handleRoot();
     });
 
+server.on("/restart", HTTP_POST, [this]()
+{
+    server.send(200, "text/html",
+                "<html><body>"
+                "<h1>Restarting...</h1>"
+                "<p>BUSWARE TUL is restarting.</p>"
+                "</body></html>");
+
+    delay(200);
+    ESP.restart();
+});
     server.on("/wifi", HTTP_GET, [this]()
     {
         handleWiFi();
@@ -300,6 +311,33 @@ void WebManager::handleRoot()
     s += "<a href='/wifi'>WiFi configuration</a>";
     s += "<a href='/update'>Firmware update</a>";
     s += "<a href='/serial'>Serial monitor</a>";
+
+    s += "<form method='POST' action='/restart' "
+        "onsubmit=\"return confirm('Restart BUSWARE TUL?');\" "
+        "style='margin-top:20px;'>";
+
+    s += "<button type='submit'>Restart ESP32</button>";
+
+    s += "</form>";
+
+    s += "<h2>About this project</h2>";
+
+    s += "<p>";
+    s += "BUSWARE TUL is based on the open-source BUSWARE ESP32 project.";
+    s += "</p>";
+
+    s += "<p>";
+    s += "<b>Original project:</b><br>";
+    s += "<a href='https://github.com/tostmann/busware-esp32' "
+        "target='_blank'>tostmann/busware-esp32</a>";
+    s += "</p>";
+
+    s += "<p>";
+    s += "<b>TUL ESP32-C3 development and enhancements:</b><br>";
+    s += "<a href='https://github.com/JackyKNX/busware-esp32' "
+        "target='_blank'>JackyKNX/busware-esp32</a>";
+    s += "</p>";
+
     s += htmlFooter();
 
     server.send(200, "text/html", s);
