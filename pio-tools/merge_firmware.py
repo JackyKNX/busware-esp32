@@ -1,18 +1,14 @@
 Import("env")
-import os
+import shutil
+
+#print(env.Dump())
 
 APP_BIN = "$BUILD_DIR/${PROGNAME}.bin"
-
-PROJECT_DIR = os.path.abspath(env.subst("$PROJECT_DIR"))
-REPO_DIR = os.path.abspath(os.path.join(PROJECT_DIR, "../.."))
-FIRMWARE_DIR = os.path.join(REPO_DIR, "firmware")
-
-os.makedirs(FIRMWARE_DIR, exist_ok=True)
-
-MERGED_BIN = os.path.join(FIRMWARE_DIR, "${PIOENV}.factory.bin")
-OTA_BIN = os.path.join(FIRMWARE_DIR, "${PIOENV}.ota.bin")
-
+#MERGED_BIN = "$BUILD_DIR/${PROGNAME}.factory.bin"
+MERGED_BIN = "$PROJECT_DIR/../../firmware/${PIOENV}.factory.bin"
+OTA_BIN = "$PROJECT_DIR/../../firmware/${PIOENV}.ota.bin"
 BOARD_CONFIG = env.BoardConfig()
+
 
 def merge_bin(source, target, env):
     # The list contains all extra images (bootloader, partitions, eboot) and
@@ -52,13 +48,9 @@ env.AddPostAction(APP_BIN, merge_bin)
 env.AddPostAction(APP_BIN, bin_map_copy)
 
 # Patch the upload command to flash the merged binary at address 0x0
-# Patch the upload command to flash the merged factory binary
-# using the explicit write_flash operation required by esptool 4.x.
 env.Replace(
     UPLOADERFLAGS=[
-        "write_flash",
-        "0x0",
-        MERGED_BIN,
-    ],
+        ]
+        + ["0x0", MERGED_BIN],
     UPLOADCMD='"$PYTHONEXE" "$UPLOADER" $UPLOADERFLAGS',
 )

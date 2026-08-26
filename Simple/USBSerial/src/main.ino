@@ -21,6 +21,7 @@
 #include "version.h"
 #include "busware.h"
 #include <WiFi.h>
+#include "WebManager.h"
 
 #ifdef USE_IMPROV
 #include <ImprovWiFiLibrary.h>
@@ -54,6 +55,28 @@ uint32_t usbTx = 0;
 uint32_t knxRx = 0;
 uint32_t knxTx = 0;
 
+
+WebManager webManager;
+
+uint32_t getUsbRx()
+{
+    return usbRx;
+}
+
+uint32_t getUsbTx()
+{
+    return usbTx;
+}
+
+uint32_t getKnxRx()
+{
+    return knxRx;
+}
+
+uint32_t getKnxTx()
+{
+    return knxTx;
+}
 
 // Timing
 uint32_t lastStatus = 0;
@@ -128,6 +151,14 @@ void setup()
      */
     Transceiver.begin();
 
+webManager.begin(
+    MYNAME,
+    VERSION,
+    getUsbRx,
+    getUsbTx,
+    getKnxRx,
+    getKnxTx
+);
 
     /*
      * Watchdog.
@@ -172,6 +203,8 @@ void setup()
 
 void loop()
 {
+    webManager.loop();
+
     /*
      * Always feed the watchdog at the beginning of the loop.
      */
@@ -206,6 +239,7 @@ void loop()
             break;
 
         uint8_t b = (uint8_t)c;
+        webManager.logByte('T', b);
 
 
 #ifdef USE_IMPROV
@@ -258,6 +292,8 @@ while (Transceiver.available() > 0)
         break;
 
     uint8_t b = (uint8_t)c;
+
+    webManager.logByte('R', b);
 
     Serial.write(&b, 1);
 

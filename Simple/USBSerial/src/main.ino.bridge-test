@@ -1,0 +1,95 @@
+#include "version.h"
+#include "busware.h"
+#include <WiFi.h>
+
+#define MYNAME "TUL-BRIDGE-TEST"
+
+TPUARTTransceiver Transceiver(&Serial0);
+
+uint32_t usbRx = 0;
+uint32_t usbTx = 0;
+uint32_t knxRx = 0;
+uint32_t knxTx = 0;
+
+uint32_t lastStatus = 0;
+
+void setup()
+{
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    Serial.begin(115200);
+
+    delay(1000);
+
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println("TUL BRIDGE TEST");
+    Serial.println("==============================");
+
+    Transceiver.begin();
+
+    Serial.println("TPUART begin OK");
+    Serial.println("38400 8E1");
+    Serial.println("==============================");
+}
+
+void loop()
+{
+    bool activity = false;
+
+    // USB -> TPUART
+    while (Serial.available() > 0) {
+        int c = Serial.read();
+
+        if (c >= 0) {
+            uint8_t b = (uint8_t)c;
+
+            Transceiver.write(&b, 1);
+
+            usbRx++;
+            knxTx++;
+            activity = true;
+        }
+    }
+
+    // TPUART -> USB
+
+while (Transceiver.available() > 0) {
+    uint8_t b;
+
+    size_t n = Transceiver.readBytes(&b, 1);
+
+    if (n == 1) {
+        Serial.write(&b, 1);
+
+        knxRx++;
+        usbTx++;
+        activity = true;
+    }
+}
+
+    if (activity) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        lastStatus = millis();
+    }
+
+    if (millis() - lastStatus > 500) {
+        digitalWrite(LED_BUILTIN, LOW);
+    }
+
+    // status every 5 seconds
+    if (millis() - lastStatus >= 5000) {
+        lastStatus = millis();
+
+        Serial.print("STATUS usbRx=");
+        Serial.print(usbRx);
+        Serial.print(" usbTx=");
+        Serial.print(usbTx);
+        Serial.print(" knxRx=");
+        Serial.print(knxRx);
+        Serial.print(" knxTx=");
+        Serial.print(knxTx);
+        Serial.print(" avail=");
+        Serial.println(Transceiver.available());
+    }
+}
