@@ -3,6 +3,9 @@
 #include <WiFi.h>
 #include <Update.h>
 #include <ESPmDNS.h>
+#include <esp_system.h>
+#include <esp_ota_ops.h>
+#include "version.h"
 
 #define WEB_PORT 80
 
@@ -22,6 +25,10 @@ WebManager::WebManager()
       getUsbTx(nullptr),
       getKnxRx(nullptr),
       getKnxTx(nullptr),
+      otaStarted(false),
+      otaFailed(false),
+      otaReceived(0),
+      otaPartition(nullptr),
       serialLogHead(0),
       serialLogTail(0),
       lastRxByte(0),
@@ -117,9 +124,12 @@ void WebManager::startAP()
 
     String apName = String(AP_PREFIX) + chipId;
 
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(apName.c_str(), AP_PASSWORD);
-
+WiFi.mode(WIFI_AP);
+WiFi.softAPsetHostname(deviceName.c_str());
+WiFi.softAP(
+    apName.c_str(),
+    AP_PASSWORD
+);
     apMode = true;
     apPassword = AP_PASSWORD;
 
@@ -159,6 +169,17 @@ server.on("/restart", HTTP_POST, [this]()
     {
         handleWiFiSave();
     });
+
+server.on("/wifi/scan", HTTP_GET, [this]()
+{
+    handleWiFiScan();
+});
+
+server.on("/wifi/forget", HTTP_POST, [this]()
+{
+    handleWiFiForget();
+});
+
 
     server.on("/api/status", HTTP_GET, [this]()
     {
@@ -221,7 +242,7 @@ String WebManager::htmlHeader(const String &title)
     s += "<style>";
     s += "body{font-family:Arial,sans-serif;background:#f3f4f6;";
     s += "margin:0;padding:20px;color:#222;}";
-    s += ".box{background:white;max-width:700px;margin:auto;";
+    s += ".box{background:white;max-width:1100px;margin:auto;";
     s += "padding:24px;border-radius:10px;";
     s += "box-shadow:0 2px 8px rgba(0,0,0,.12);}";
     s += "h1{margin-top:0;}";
@@ -236,6 +257,28 @@ String WebManager::htmlHeader(const String &title)
     s += ".ok{color:#167534;}";
     s += ".warn{color:#9a6700;}";
     s += ".muted{color:#666;font-size:13px;}";
+
+s += ".grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}";
+s += ".card{background:#fff;border:1px solid #e5e7eb;";
+s += "border-radius:8px;padding:18px;}";
+s += ".card h2{margin-top:0;}";
+s += ".wifi-list{margin:15px 0;}";
+s += ".wifi-net{display:flex;align-items:center;";
+s += "justify-content:space-between;padding:12px;";
+s += "border:1px solid #ddd;border-radius:6px;margin:6px 0;";
+s += "cursor:pointer;}";
+s += ".wifi-net:hover{background:#f5f5f5;}";
+s += ".wifi-info{display:flex;flex-direction:column;}";
+s += ".wifi-ssid{font-weight:bold;}";
+s += ".wifi-meta{font-size:13px;color:#666;}";
+s += ".wifi-rssi{font-weight:bold;}";
+s += ".danger{background:#b42318;color:white;}";
+s += ".secondary{background:#e5e7eb;color:#222;}";
+s += "@media(max-width:700px){";
+s += ".grid{grid-template-columns:1fr;}";
+s += ".box{padding:16px;}";
+s += "}";
+
     s += "</style>";
 
     s += "</head><body><div class='box'>";
@@ -250,13 +293,30 @@ String WebManager::htmlFooter()
 
 void WebManager::handleRoot()
 {
-    String s = htmlHeader("BUSWARE TUL");
+    String s = htmlHeader("BUSWARE TUL C3");
 
     s += "<h1>BUSWARE TUL</h1>";
 
-    s += "<div class='row'><span class='label'>Firmware:</span>";
-    s += version;
-    s += "</div>";
+    /*
+     * Device information
+     */
+    s += "<div class='card'>";
+
+s += "<div class='row'><span class='label'>Firmware:</span>";
+s += VERSION_SHORT;
+s += "</div>";
+
+s += "<div class='row'><span class='label'>Build:</span>";
+s += BUILD_NUMBER;
+s += "</div>";
+
+s += "<div class='row'><span class='label'>Built:</span>";
+s += BUILD_TIME;
+s += "</div>";
+
+s += "<div class='row'><span class='label'>Git:</span>";
+s += GIT_COMMIT;
+s += "</div>";
 
     s += "<div class='row'><span class='label'>Device:</span>";
     s += deviceName;
@@ -288,6 +348,91 @@ void WebManager::handleRoot()
     s += String(millis() / 1000);
     s += " s</div>";
 
+    s += "</div>";
+
+    /*
+     * Two-column main dashboard
+     */
+    s += "<div class='grid' style='margin-top:20px;'>";
+
+    /*
+     * LEFT COLUMN - System health
+     */
+    s += "<div class='card'>";
+
+    s += "<h2>System health</h2>";
+
+    bool healthOk =
+        (!apMode) &&
+        (WiFi.status() == WL_CONNECTED) &&
+        (ESP.getFreeHeap() > 20000);
+
+    s += "<div class='row'><span class='label'>Status:</span>";
+
+    if (healthOk)
+        s += "<span class='ok'>Healthy</span>";
+    else
+        s += "<span class='warn'>Check</span>";
+
+    s += "</div>";
+
+    s += "<div class='row'><span class='label'>Reset reason:</span>";
+    s += resetReason();
+    s += "</div>";
+
+    s += "<div class='row'><span class='label'>Free heap:</span>";
+    s += String(ESP.getFreeHeap());
+    s += " bytes</div>";
+
+    s += "<div class='row'><span class='label'>Min free heap:</span>";
+    s += String(ESP.getMinFreeHeap());
+    s += " bytes</div>";
+
+    s += "<div class='row'><span class='label'>WiFi RSSI:</span>";
+
+    if (!apMode && WiFi.status() == WL_CONNECTED)
+    {
+        s += String(WiFi.RSSI());
+        s += " dBm";
+    }
+    else
+    {
+        s += "n/a";
+    }
+
+    s += "</div>";
+
+    s += "<div class='row'><span class='label'>Flash:</span>";
+    s += String(ESP.getFlashChipSize() / 1024 / 1024);
+    s += " MB</div>";
+
+    s += "<div class='row'><span class='label'>Firmware size:</span>";
+    s += String(ESP.getSketchSize() / 1024);
+    s += " KB</div>";
+
+    s += "<div class='row'><span class='label'>OTA partition:</span>";
+    s += String(ESP.getFreeSketchSpace() / 1024);
+    s += " KB</div>";
+
+    s += "<div class='row'><span class='label'>KNX traffic:</span>";
+
+    uint32_t rx = getKnxRx ? getKnxRx() : 0;
+    uint32_t tx = getKnxTx ? getKnxTx() : 0;
+
+    if ((rx + tx) > 0)
+        s += "<span class='ok'>Active</span>";
+    else
+        s += "<span class='warn'>No traffic</span>";
+
+    s += "</div>";
+
+    s += "</div>";
+
+    /*
+     * RIGHT COLUMN - Bridge statistics
+     */
+    s += "<div class='card'>";
+
     s += "<h2>Bridge statistics</h2>";
 
     s += "<div class='row'><span class='label'>USB RX:</span>";
@@ -313,12 +458,21 @@ void WebManager::handleRoot()
     s += "<a href='/serial'>Serial monitor</a>";
 
     s += "<form method='POST' action='/restart' "
-        "onsubmit=\"return confirm('Restart BUSWARE TUL?');\" "
-        "style='margin-top:20px;'>";
+         "onsubmit=\"return confirm('Restart BUSWARE TUL?');\" "
+         "style='margin-top:15px;'>";
 
     s += "<button type='submit'>Restart ESP32</button>";
 
     s += "</form>";
+
+    s += "</div>";
+
+    s += "</div>";
+
+    /*
+     * About
+     */
+    s += "<div class='card' style='margin-top:20px;'>";
 
     s += "<h2>About this project</h2>";
 
@@ -329,19 +483,65 @@ void WebManager::handleRoot()
     s += "<p>";
     s += "<b>Original project:</b><br>";
     s += "<a href='https://github.com/tostmann/busware-esp32' "
-        "target='_blank'>tostmann/busware-esp32</a>";
+         "target='_blank'>tostmann/busware-esp32</a>";
     s += "</p>";
 
     s += "<p>";
     s += "<b>TUL ESP32-C3 development and enhancements:</b><br>";
     s += "<a href='https://github.com/JackyKNX/busware-esp32' "
-        "target='_blank'>JackyKNX/busware-esp32</a>";
+         "target='_blank'>JackyKNX/busware-esp32</a>";
     s += "</p>";
+
+    s += "</div>";
 
     s += htmlFooter();
 
     server.send(200, "text/html", s);
 }
+
+bool WebManager::connectWiFi(
+    const String &ssid,
+    const String &password)
+{
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(deviceName.c_str());
+
+    WiFi.disconnect();
+    delay(100);
+
+    WiFi.begin(ssid.c_str(), password.c_str());
+
+    Serial.print("WiFi: testing connection to ");
+    Serial.println(ssid);
+
+    uint32_t start = millis();
+
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - start < WIFI_CONNECT_TIMEOUT_MS)
+    {
+        delay(100);
+    }
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.print("WiFi: connection successful, IP: ");
+        Serial.println(WiFi.localIP());
+
+        if (MDNS.begin(deviceName.c_str()))
+        {
+            Serial.print("mDNS: http://");
+            Serial.print(deviceName);
+            Serial.println(".local/");
+        }
+
+        return true;
+    }
+
+    Serial.println("WiFi: connection failed");
+
+    return false;
+}
+
 
 void WebManager::handleWiFi()
 {
@@ -353,17 +553,48 @@ void WebManager::handleWiFi()
 
     if (apMode)
     {
-        s += "<p class='warn'>Device is currently running as an access point.</p>";
+        s += "<p class='warn'><b>Configuration mode</b></p>";
         s += "<p class='muted'>";
-        s += "After saving, the device will restart and try to connect.";
+        s += "Connect your computer or phone to the TUL access point "
+             "and select a WiFi network below.";
         s += "</p>";
     }
+    else if (WiFi.status() == WL_CONNECTED)
+    {
+        s += "<div class='card'>";
+        s += "<h2>Current connection</h2>";
+
+        s += "<div class='row'><span class='label'>SSID:</span>";
+        s += htmlEscape(WiFi.SSID());
+        s += "</div>";
+
+        s += "<div class='row'><span class='label'>IP:</span>";
+        s += WiFi.localIP().toString();
+        s += "</div>";
+
+        s += "<div class='row'><span class='label'>RSSI:</span>";
+        s += String(WiFi.RSSI());
+        s += " dBm</div>";
+
+        s += "</div>";
+    }
+
+    s += "<h2>Available networks</h2>";
+
+    s += "<button type='button' class='secondary' "
+         "onclick='scanWiFi()'>Scan for networks</button>";
+
+    s += "<div id='wifiList' class='wifi-list'>";
+    s += "<p class='muted'>Press Scan for networks.</p>";
+    s += "</div>";
+
+    s += "<h2>Connect</h2>";
 
     s += "<form method='POST' action='/wifi/save'>";
 
     s += "<label>SSID</label>";
-    s += "<input type='text' name='ssid' value='";
-    s += currentSsid;
+    s += "<input id='ssid' type='text' name='ssid' value='";
+    s += htmlEscape(currentSsid);
     s += "' required>";
 
     s += "<label>Password</label>";
@@ -373,50 +604,453 @@ void WebManager::handleWiFi()
     s += "Leave password empty to keep the currently stored password.";
     s += "</p>";
 
-    s += "<button type='submit'>Save & Restart</button>";
+    s += "<button type='submit'>Connect & Save</button>";
 
     s += "</form>";
 
+    if (currentSsid.length() > 0)
+    {
+        s += "<form method='POST' action='/wifi/forget' "
+             "style='margin-top:20px;' "
+             "onsubmit=\"return confirm('Forget stored WiFi configuration?');\">";
+
+        s += "<button type='submit' class='danger'>";
+        s += "Forget WiFi configuration";
+        s += "</button>";
+
+        s += "</form>";
+    }
+
     s += "<p><a href='/'>&larr; Back</a></p>";
+
+    s += R"rawliteral(
+<script>
+function selectWiFi(ssid)
+{
+    document.getElementById('ssid').value = ssid;
+    window.scrollTo({
+        top: document.getElementById('ssid').offsetTop - 20,
+        behavior: 'smooth'
+    });
+}
+
+function scanWiFi()
+{
+    const list = document.getElementById('wifiList');
+
+    list.innerHTML =
+        "<p class='muted'>Scanning for WiFi networks...</p>";
+
+    fetch('/wifi/scan')
+        .then(response => response.json())
+        .then(networks => {
+
+            if (!networks.length)
+            {
+                list.innerHTML =
+                    "<p class='muted'>No WiFi networks found.</p>";
+                return;
+            }
+
+            list.innerHTML = "";
+
+            networks.forEach(network => {
+
+                const div = document.createElement('div');
+                div.className = 'wifi-net';
+
+                div.onclick = function()
+                {
+                    selectWiFi(network.ssid);
+                };
+
+                const info = document.createElement('div');
+                info.className = 'wifi-info';
+
+                const ssid = document.createElement('span');
+                ssid.className = 'wifi-ssid';
+                ssid.textContent =
+                    network.ssid || '(hidden network)';
+
+                const meta = document.createElement('span');
+                meta.className = 'wifi-meta';
+                meta.textContent =
+                    network.encryption;
+
+                info.appendChild(ssid);
+                info.appendChild(meta);
+
+                const rssi = document.createElement('span');
+                rssi.className = 'wifi-rssi';
+                rssi.textContent =
+                    network.rssi + " dBm";
+
+                div.appendChild(info);
+                div.appendChild(rssi);
+
+                list.appendChild(div);
+            });
+        })
+        .catch(error => {
+            list.innerHTML =
+                "<p class='warn'>WiFi scan failed.</p>";
+        });
+}
+</script>
+)rawliteral";
 
     s += htmlFooter();
 
     server.send(200, "text/html", s);
 }
 
+
+String WebManager::wifiEncryptionName(uint8_t encryption)
+{
+    switch (encryption)
+    {
+        case WIFI_AUTH_OPEN:
+            return "Open";
+
+        case WIFI_AUTH_WEP:
+            return "WEP";
+
+        case WIFI_AUTH_WPA_PSK:
+            return "WPA";
+
+        case WIFI_AUTH_WPA2_PSK:
+            return "WPA2";
+
+        case WIFI_AUTH_WPA_WPA2_PSK:
+            return "WPA/WPA2";
+
+        case WIFI_AUTH_WPA2_ENTERPRISE:
+            return "WPA2 Enterprise";
+
+        case WIFI_AUTH_WPA3_PSK:
+            return "WPA3";
+
+        case WIFI_AUTH_WPA2_WPA3_PSK:
+            return "WPA2/WPA3";
+
+        default:
+            return "Secured";
+    }
+}
+
+
+void WebManager::handleWiFiScan()
+{
+    Serial.println("WiFi: scanning networks...");
+
+if (apMode)
+    WiFi.mode(WIFI_AP_STA);
+else
+    WiFi.mode(WIFI_STA);
+
+    int count = WiFi.scanNetworks(false, true);
+
+    String json = "[";
+
+    for (int i = 0; i < count; i++)
+    {
+        if (i > 0)
+            json += ",";
+
+        json += "{";
+
+        json += "\"ssid\":\"";
+        json += jsonEscape(WiFi.SSID(i));
+        json += "\",";
+
+        json += "\"rssi\":";
+        json += String(WiFi.RSSI(i));
+        json += ",";
+
+        json += "\"encryption\":\"";
+        json += jsonEscape(
+            wifiEncryptionName(
+                (uint8_t)WiFi.encryptionType(i)
+            )
+        );
+        json += "\"";
+
+        json += "}";
+    }
+
+    json += "]";
+
+    WiFi.scanDelete();
+
+    server.send(
+        200,
+        "application/json",
+        json
+    );
+}
+
 void WebManager::handleWiFiSave()
 {
     if (!server.hasArg("ssid"))
     {
-        server.send(400, "text/plain", "Missing SSID");
+        server.send(
+            400,
+            "text/plain",
+            "Missing SSID"
+        );
+
         return;
     }
 
     String ssid = server.arg("ssid");
     String password = server.arg("password");
 
+    ssid.trim();
+
     if (ssid.length() == 0)
     {
-        server.send(400, "text/plain", "SSID cannot be empty");
+        server.send(
+            400,
+            "text/plain",
+            "SSID cannot be empty"
+        );
+
         return;
     }
 
-    preferences.putString("ssid", ssid);
+    /*
+     * If password is empty, use the currently stored password.
+     */
+    if (password.length() == 0)
+    {
+        password = preferences.getString(
+            "password",
+            ""
+        );
+    }
 
-    if (password.length() > 0)
-        preferences.putString("password", password);
+    String oldSsid =
+        preferences.getString("ssid", "");
 
-    String s = htmlHeader("WiFi");
+    String oldPassword =
+        preferences.getString("password", "");
 
-    s += "<h1>WiFi saved</h1>";
-    s += "<p>Device will restart and connect to the configured network.</p>";
+    /*
+     * Test the new connection BEFORE saving it.
+     */
+    bool connected =
+        connectWiFi(ssid, password);
+
+    if (!connected)
+    {
+        /*
+         * Restore previous connection if possible.
+         */
+        if (oldSsid.length() > 0)
+        {
+            Serial.println(
+                "WiFi: restoring previous configuration"
+            );
+
+            connectWiFi(
+                oldSsid,
+                oldPassword
+            );
+        }
+        else
+        {
+            startAP();
+        }
+
+        String s =
+            htmlHeader("WiFi");
+
+        s += "<h1>Connection failed</h1>";
+
+        s += "<p class='warn'>";
+        s += "Could not connect to the selected WiFi network.";
+        s += "</p>";
+
+        s += "<p>";
+        s += "The previous WiFi configuration was not changed.";
+        s += "</p>";
+
+        s += "<p><a href='/wifi'>";
+        s += "Try again";
+        s += "</a></p>";
+
+        s += htmlFooter();
+
+        server.send(
+            400,
+            "text/html",
+            s
+        );
+
+        return;
+    }
+
+    /*
+     * Connection successful.
+     * Now store the credentials.
+     */
+    preferences.putString(
+        "ssid",
+        ssid
+    );
+
+    preferences.putString(
+        "password",
+        password
+    );
+
+    String s =
+        htmlHeader("WiFi");
+
+    s += "<h1>WiFi connected</h1>";
+
+    s += "<p class='ok'>";
+    s += "Connection successful.";
+    s += "</p>";
+
+    s += "<p>";
+    s += "WiFi configuration has been saved.";
+    s += "</p>";
+
+    s += "<p>";
+    s += "Device will restart.";
+    s += "</p>";
 
     s += htmlFooter();
 
-    server.send(200, "text/html", s);
+    server.send(
+        200,
+        "text/html",
+        s
+    );
 
-    delay(500);
+    delay(800);
+
     ESP.restart();
+}
+
+
+void WebManager::handleWiFiForget()
+{
+    preferences.remove("ssid");
+    preferences.remove("password");
+
+    Serial.println(
+        "WiFi: stored configuration removed"
+    );
+
+    String s =
+        htmlHeader("WiFi");
+
+    s += "<h1>WiFi configuration removed</h1>";
+
+    s += "<p>";
+    s += "Stored WiFi credentials have been deleted.";
+    s += "</p>";
+
+    s += "<p>";
+    s += "Device will restart in configuration mode.";
+    s += "</p>";
+
+    s += htmlFooter();
+
+    server.send(
+        200,
+        "text/html",
+        s
+    );
+
+    delay(800);
+
+    ESP.restart();
+}
+
+
+String WebManager::resetReason()
+{
+    switch (esp_reset_reason())
+    {
+        case ESP_RST_UNKNOWN:
+            return "Unknown";
+
+        case ESP_RST_POWERON:
+            return "Power-on";
+
+        case ESP_RST_EXT:
+            return "External reset";
+
+        case ESP_RST_SW:
+            return "Software reset";
+
+        case ESP_RST_PANIC:
+            return "Panic";
+
+        case ESP_RST_INT_WDT:
+            return "Interrupt watchdog";
+
+        case ESP_RST_TASK_WDT:
+            return "Task watchdog";
+
+        case ESP_RST_WDT:
+            return "Watchdog";
+
+        case ESP_RST_DEEPSLEEP:
+            return "Deep sleep";
+
+        case ESP_RST_BROWNOUT:
+            return "Brownout";
+
+        case ESP_RST_SDIO:
+            return "SDIO reset";
+
+        default:
+            return "Other";
+    }
+}
+
+
+String WebManager::htmlEscape(const String &value)
+{
+    String result;
+
+    for (size_t i = 0; i < value.length(); i++)
+    {
+        char c = value[i];
+
+        switch (c)
+        {
+            case '&':
+                result += "&amp;";
+                break;
+
+            case '<':
+                result += "&lt;";
+                break;
+
+            case '>':
+                result += "&gt;";
+                break;
+
+            case '"':
+                result += "&quot;";
+                break;
+
+            case '\'':
+                result += "&#39;";
+                break;
+
+            default:
+                result += c;
+                break;
+        }
+    }
+
+    return result;
 }
 
 String WebManager::jsonEscape(const String &value)
@@ -441,6 +1075,11 @@ String WebManager::jsonEscape(const String &value)
 void WebManager::handleStatus()
 {
     String ip;
+
+    bool healthOk =
+        (!apMode) &&
+        (WiFi.status() == WL_CONNECTED) &&
+        (ESP.getFreeHeap() > 20000);
 
     if (apMode)
         ip = WiFi.softAPIP().toString();
@@ -488,6 +1127,34 @@ void WebManager::handleStatus()
     json += "\"knxTx\":";
     json += String(getKnxTx ? getKnxTx() : 0);
 
+json += ",\"health\":";
+json += healthOk ? "\"Healthy\"" : "\"Check\"";
+
+json += ",\"resetReason\":\"";
+json += jsonEscape(resetReason());
+json += "\"";
+
+json += ",\"freeHeap\":";
+json += String(ESP.getFreeHeap());
+
+json += ",\"minFreeHeap\":";
+json += String(ESP.getMinFreeHeap());
+
+json += ",\"rssi\":";
+if (!apMode && WiFi.status() == WL_CONNECTED)
+    json += String(WiFi.RSSI());
+else
+    json += "null";
+
+json += ",\"flashSize\":";
+json += String(ESP.getFlashChipSize());
+
+json += ",\"firmwareSize\":";
+json += String(ESP.getSketchSize());
+
+json += ",\"otaPartitionSize\":";
+json += String(ESP.getFreeSketchSpace());
+
     json += "}";
 
     server.send(200, "application/json", json);
@@ -518,6 +1185,13 @@ void WebManager::handleUpdatePage()
     s += version;
     s += "</b></p>";
 
+s += "<p class='muted'>";
+s += "Target: ESP32-C3<br>";
+s += "Available OTA space: ";
+s += String(ESP.getFreeSketchSpace() / 1024);
+s += " KB";
+s += "</p>";
+
     s += "<form method='POST' action='/update' ";
     s += "enctype='multipart/form-data'>";
 
@@ -539,6 +1213,10 @@ void WebManager::handleUpdatePage()
     server.send(200, "text/html", s);
 }
 
+
+
+
+
 void WebManager::handleUpdateUpload()
 {
     if (!otaAuthorized())
@@ -546,67 +1224,267 @@ void WebManager::handleUpdateUpload()
 
     HTTPUpload &upload = server.upload();
 
+
     if (upload.status == UPLOAD_FILE_START)
     {
-        Serial.print("OTA: ");
-        Serial.print(upload.filename);
-        Serial.println();
+        otaStarted = false;
+        otaFailed = false;
+        otaReceived = 0;
 
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+        Serial.println();
+        Serial.println("================================");
+        Serial.print("OTA: ");
+        Serial.println(upload.filename);
+
+        Serial.print("OTA: expected size = ");
+        Serial.print(upload.totalSize);
+        Serial.println(" bytes");
+
+        /*
+         * Validate filename.
+         */
+        String filename = upload.filename;
+        filename.toLowerCase();
+
+        if (!filename.endsWith(".bin"))
         {
-            Update.printError(Serial);
+            otaFailed = true;
+
+            Serial.println(
+                "OTA ERROR: file is not a .bin image"
+            );
+
+            return;
         }
+
+        /*
+         * Start OTA update.
+         *
+         * ESP32 Arduino Update library will select
+         * the next OTA application partition.
+         */
+
+otaPartition = esp_ota_get_next_update_partition(NULL);
+
+if (otaPartition == nullptr)
+{
+    otaFailed = true;
+
+    Serial.println(
+        "OTA ERROR: no OTA target partition"
+    );
+
+    return;
+}
+
+Serial.print("OTA: target partition: ");
+Serial.println(otaPartition->label);
+
+
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
+        {
+            otaFailed = true;
+
+            Serial.print("OTA ERROR: Update.begin failed: ");
+            Update.printError(Serial);
+
+            return;
+        }
+
+        otaStarted = true;
+
+        Serial.println(
+            "OTA: update started"
+        );
     }
+
     else if (upload.status == UPLOAD_FILE_WRITE)
     {
-        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+        if (!otaStarted || otaFailed)
+            return;
+
+        size_t written =
+            Update.write(
+                upload.buf,
+                upload.currentSize
+            );
+
+        if (written != upload.currentSize)
         {
+            otaFailed = true;
+
+            Serial.print(
+                "OTA ERROR: write failed: "
+            );
+
             Update.printError(Serial);
+
+            Update.abort();
+
+            return;
         }
+
+        otaReceived += written;
+
+        /*
+         * Progress information.
+         */
+        Serial.print("OTA: received ");
+        Serial.print(otaReceived);
+        Serial.println(" bytes");
     }
+
     else if (upload.status == UPLOAD_FILE_END)
     {
-        if (Update.end(true))
+        if (!otaStarted || otaFailed)
         {
-            Serial.print("OTA: upload complete, ");
-            Serial.print(upload.totalSize);
-            Serial.println(" bytes");
+            Serial.println(
+                "OTA ERROR: upload finished without active update"
+            );
+
+            return;
         }
-        else
-        {
-            Update.printError(Serial);
-        }
+
+        /*
+         * Finalize and verify the firmware.
+         */
+
+if (Update.end(true))
+{
+    /*
+     * Update.end(true) has verified the image.
+     *
+     * Explicitly select the partition written by
+     * this OTA operation as the next boot partition.
+     */
+
+    if (otaPartition == nullptr)
+    {
+        otaFailed = true;
+
+        Serial.println(
+            "OTA ERROR: OTA partition reference lost"
+        );
+
+        return;
+    }
+
+    Serial.print("OTA: written partition: ");
+    Serial.println(otaPartition->label);
+
+    esp_err_t result =
+        esp_ota_set_boot_partition(otaPartition);
+
+    if (result != ESP_OK)
+    {
+        otaFailed = true;
+
+        Serial.print(
+            "OTA ERROR: esp_ota_set_boot_partition failed: "
+        );
+        Serial.println(result);
+
+        return;
+    }
+
+    const esp_partition_t *boot =
+        esp_ota_get_boot_partition();
+
+    Serial.print("OTA: boot partition: ");
+    Serial.println(
+        boot ? boot->label : "NONE"
+    );
+
+    Serial.print("OTA: update verified, ");
+    Serial.print(otaReceived);
+    Serial.println(" bytes");
+
+    Serial.println(
+        "OTA: validation successful"
+    );
+}
+else
+{
+    otaFailed = true;
+
+    Serial.print(
+        "OTA ERROR: final validation failed: "
+    );
+
+    Update.printError(Serial);
+    Update.abort();
+}
+    }
+
+    else if (upload.status == UPLOAD_FILE_ABORTED)
+    {
+        otaFailed = true;
+
+        if (otaStarted)
+            Update.abort();
+
+        Serial.println(
+            "OTA: upload aborted"
+        );
+
+        Serial.println(
+            "================================"
+        );
     }
 }
+
 
 void WebManager::handleUpdateResult()
 {
     if (!otaAuthorized())
         return;
 
-    if (!Update.isFinished())
-    {
-        server.send(
-            500,
-            "text/plain",
-            "OTA update failed"
-        );
+    String s = htmlHeader("Firmware Update");
 
-        return;
+    if (otaFailed || !otaStarted || Update.hasError())
+    {
+        s += "<h1>Firmware update failed</h1>";
+
+        s += "<p class='warn'>";
+        s += "Firmware update was not successful.";
+        s += "</p>";
+
+        s += "<p>";
+        s += "The current firmware has NOT been replaced.";
+        s += "</p>";
+
+        s += "<p>";
+        s += "<a href='/update'>Try again</a>";
+        s += "</p>";
+    }
+    else
+    {
+        s += "<h1>Firmware update successful</h1>";
+
+        s += "<p class='ok'>";
+        s += "Firmware has been uploaded and verified successfully.";
+        s += "</p>";
+
+        s += "<p>";
+        s += "Received: ";
+        s += String(otaReceived);
+        s += " bytes";
+        s += "</p>";
+
+        s += "<p>";
+        s += "BUSWARE TUL will restart now.";
+        s += "</p>";
     }
 
-    server.send(
-        200,
-        "text/html",
-        "<html><body>"
-        "<h1>Update successful</h1>"
-        "<p>Device is restarting...</p>"
-        "</body></html>"
-    );
+    s += htmlFooter();
 
-    delay(500);
+    server.send(200, "text/html", s);
 
-    ESP.restart();
+    if (!otaFailed && otaStarted && !Update.hasError())
+    {
+        delay(1000);
+        ESP.restart();
+    }
 }
 
 

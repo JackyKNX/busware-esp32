@@ -49,6 +49,12 @@ private:
     void handleRoot();
     void handleWiFi();
     void handleWiFiSave();
+    void handleWiFiScan();
+    void handleWiFiForget();
+
+    bool connectWiFi(const String &ssid, const String &password);
+    String wifiEncryptionName(uint8_t encryption);
+    String htmlEscape(const String &value);
 
     void handleStatus();
 
@@ -58,6 +64,12 @@ private:
 
     bool otaAuthorized();
 
+bool otaStarted;
+bool otaFailed;
+size_t otaReceived;
+const esp_partition_t *otaPartition;
+
+    String resetReason();
     String jsonEscape(const String &value);
 
 static const uint16_t SERIAL_LOG_SIZE = 8192;
