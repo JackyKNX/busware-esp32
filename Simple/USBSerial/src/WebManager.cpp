@@ -38,21 +38,24 @@ WebManager::WebManager()
 
 
 void WebManager::begin(
-    const char *name,
-    const char *fwVersion,
-    uint32_t (*usbRx)(),
-    uint32_t (*usbTx)(),
-    uint32_t (*knxRx)(),
-    uint32_t (*knxTx)()
+    const char *deviceName,
+    const char *version,
+    uint32_t (*getUsbRx)(),
+    uint32_t (*getUsbTx)(),
+    uint32_t (*getKnxRx)(),
+    uint32_t (*getKnxTx)(),
+    MQTTManager *mqttManager
 )
 {
-    deviceName = name;
-    version = fwVersion;
+    this->deviceName = deviceName;
+    this->version = version;
 
-    getUsbRx = usbRx;
-    getUsbTx = usbTx;
-    getKnxRx = knxRx;
-    getKnxTx = knxTx;
+    this->getUsbRx = getUsbRx;
+    this->getUsbTx = getUsbTx;
+    this->getKnxRx = getKnxRx;
+    this->getKnxTx = getKnxTx;
+
+    this->mqttManager = mqttManager;
 
     preferences.begin("wifi", false);
 
@@ -180,6 +183,16 @@ server.on("/wifi/forget", HTTP_POST, [this]()
     handleWiFiForget();
 });
 
+server.on("/mqtt", HTTP_GET, [this]()
+{
+    handleMQTT();
+});
+
+server.on("/mqtt/save", HTTP_POST, [this]()
+{
+    handleMQTTSave();
+});
+
 
     server.on("/api/status", HTTP_GET, [this]()
     {
@@ -258,7 +271,12 @@ String WebManager::htmlHeader(const String &title)
     s += ".warn{color:#9a6700;}";
     s += ".muted{color:#666;font-size:13px;}";
 
-s += ".grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}";
+s += ".grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;}";
+    s += ".dashboard-device{grid-column:1;grid-row:1;}";
+    s += ".dashboard-health{grid-column:2;grid-row:1;}";
+    s += ".dashboard-bridge{grid-column:1;grid-row:2;}";
+    s += ".dashboard-mqtt{grid-column:2;grid-row:2;}";
+    s += ".dashboard-about{margin-top:20px;}";
 s += ".card{background:#fff;border:1px solid #e5e7eb;";
 s += "border-radius:8px;padding:18px;}";
 s += ".card h2{margin-top:0;}";
@@ -298,25 +316,33 @@ void WebManager::handleRoot()
     s += "<h1>BUSWARE TUL</h1>";
 
     /*
-     * Device information
+     * Two-column main dashboard
+     *
+     * Row 1: Device information | System health
+     * Row 2: Bridge statistics  | MQTT
      */
-    s += "<div class='card'>";
+    s += "<div class='grid' style='margin-top:20px;'>";
 
-s += "<div class='row'><span class='label'>Firmware:</span>";
-s += VERSION_SHORT;
-s += "</div>";
+    /*
+     * LEFT COLUMN - Device information
+     */
+    s += "<div class='card dashboard-device'>";
 
-s += "<div class='row'><span class='label'>Build:</span>";
-s += BUILD_NUMBER;
-s += "</div>";
+    s += "<div class='row'><span class='label'>Firmware:</span>";
+    s += VERSION_SHORT;
+    s += "</div>";
 
-s += "<div class='row'><span class='label'>Built:</span>";
-s += BUILD_TIME;
-s += "</div>";
+    s += "<div class='row'><span class='label'>Build:</span>";
+    s += BUILD_NUMBER;
+    s += "</div>";
 
-s += "<div class='row'><span class='label'>Git:</span>";
-s += GIT_COMMIT;
-s += "</div>";
+    s += "<div class='row'><span class='label'>Built:</span>";
+    s += BUILD_TIME;
+    s += "</div>";
+
+    s += "<div class='row'><span class='label'>Git:</span>";
+    s += GIT_COMMIT;
+    s += "</div>";
 
     s += "<div class='row'><span class='label'>Device:</span>";
     s += deviceName;
@@ -329,6 +355,15 @@ s += "</div>";
     else
         s += "<span class='ok'>Connected</span>";
 
+    s += "</div>";
+
+    s += "<div class='row'><span class='label'>SSID:</span>";
+    if (apMode)
+        s += htmlEscape(WiFi.softAPSSID());
+    else if (WiFi.status() == WL_CONNECTED)
+        s += htmlEscape(WiFi.SSID());
+    else
+        s += "n/a";
     s += "</div>";
 
     s += "<div class='row'><span class='label'>IP:</span>";
@@ -351,14 +386,9 @@ s += "</div>";
     s += "</div>";
 
     /*
-     * Two-column main dashboard
+     * RIGHT COLUMN - System health
      */
-    s += "<div class='grid' style='margin-top:20px;'>";
-
-    /*
-     * LEFT COLUMN - System health
-     */
-    s += "<div class='card'>";
+    s += "<div class='card dashboard-health'>";
 
     s += "<h2>System health</h2>";
 
@@ -429,9 +459,9 @@ s += "</div>";
     s += "</div>";
 
     /*
-     * RIGHT COLUMN - Bridge statistics
+     * LEFT COLUMN - Bridge statistics / Management
      */
-    s += "<div class='card'>";
+    s += "<div class='card dashboard-bridge'>";
 
     s += "<h2>Bridge statistics</h2>";
 
@@ -456,6 +486,7 @@ s += "</div>";
     s += "<a href='/wifi'>WiFi configuration</a>";
     s += "<a href='/update'>Firmware update</a>";
     s += "<a href='/serial'>Serial monitor</a>";
+    s += "<a href='/mqtt'>MQTT configuration</a>";
 
     s += "<form method='POST' action='/restart' "
          "onsubmit=\"return confirm('Restart BUSWARE TUL?');\" "
@@ -467,12 +498,87 @@ s += "</div>";
 
     s += "</div>";
 
+    /*
+     * RIGHT COLUMN - MQTT
+     */
+    s += "<div class='card dashboard-mqtt'>";
+
+    s += "<h2>MQTT</h2>";
+
+    if (!mqttManager)
+    {
+        s += "<div class='row'>";
+        s += "<span class='label'>Status:</span>";
+        s += "<span class='warn'>Unavailable</span>";
+        s += "</div>";
+    }
+    else if (!mqttManager->isEnabled())
+    {
+        s += "<div class='row'>";
+        s += "<span class='label'>Status:</span>";
+        s += "<span class='warn'>Disabled</span>";
+        s += "</div>";
+    }
+    else
+    {
+        s += "<div class='row'>";
+        s += "<span class='label'>Status:</span>";
+
+        if (mqttManager->isConnected())
+            s += "<span class='ok'>Connected</span>";
+        else
+            s += "<span class='warn'>Disconnected</span>";
+
+        s += "</div>";
+
+        s += "<div class='row'>";
+        s += "<span class='label'>Broker:</span>";
+        s += mqttManager->getHost();
+        s += ":";
+        s += String(mqttManager->getPort());
+        s += "</div>";
+
+        s += "<div class='row'>";
+        s += "<span class='label'>Base topic:</span>";
+        s += mqttManager->getBaseTopic();
+        s += "</div>";
+
+        s += "<div class='row'>";
+        s += "<span class='label'>Status publish:</span>";
+
+        if (mqttManager->getLastStatusPublishOk())
+            s += "<span class='ok'>OK</span>";
+        else
+            s += "<span class='warn'>FAILED</span>";
+
+        s += "</div>";
+
+        String mqttError = mqttManager->getLastError();
+
+        if (mqttError.length() > 0)
+        {
+            s += "<div class='row'>";
+            s += "<span class='label'>Last error:</span>";
+            s += "<span class='warn'>";
+            s += htmlEscape(mqttError);
+            s += "</span>";
+            s += "</div>";
+        }
+
+        s += "<div class='row'>";
+        s += "<span class='label'>MQTT state:</span>";
+        s += String(mqttManager->getState());
+        s += "</div>";
+    }
+
+    s += "</div>";
+
     s += "</div>";
 
     /*
      * About
      */
-    s += "<div class='card' style='margin-top:20px;'>";
+    s += "<div class='card dashboard-about'>";
 
     s += "<h2>About this project</h2>";
 
@@ -1127,6 +1233,26 @@ void WebManager::handleStatus()
     json += "\"knxTx\":";
     json += String(getKnxTx ? getKnxTx() : 0);
 
+
+if (mqttManager)
+{
+    json += ",\"mqttEnabled\":";
+    json += mqttManager->isEnabled() ? "true" : "false";
+
+    json += ",\"mqttConnected\":";
+    json += mqttManager->isConnected() ? "true" : "false";
+
+    json += ",\"mqttState\":";
+    json += String(mqttManager->getState());
+
+    json += ",\"mqttStatusPublishOk\":";
+    json += mqttManager->getLastStatusPublishOk() ? "true" : "false";
+
+    json += ",\"mqttError\":\"";
+    json += jsonEscape(mqttManager->getLastError());
+    json += "\"";
+}
+
 json += ",\"health\":";
 json += healthOk ? "\"Healthy\"" : "\"Check\"";
 
@@ -1653,3 +1779,155 @@ void WebManager::handleSerialPage()
     server.send(200, "text/html", s);
 }
 
+void WebManager::handleMQTT()
+{
+    String s = htmlHeader("MQTT Configuration");
+
+    s += "<h1>MQTT Configuration</h1>";
+
+    if (!mqttManager)
+    {
+        s += "<p class='warn'>MQTT manager unavailable.</p>";
+        s += htmlFooter();
+
+        server.send(500, "text/html", s);
+        return;
+    }
+
+    s += "<form method='POST' action='/mqtt/save'>";
+
+    s += "<label>";
+    s += "<input type='checkbox' name='enabled' value='1' ";
+
+    if (mqttManager->isEnabled())
+        s += "checked";
+
+    s += "> Enable MQTT";
+    s += "</label>";
+
+    s += "<label>Broker IP / hostname</label>";
+    s += "<input type='text' name='host' value='";
+    s += mqttManager->getHost();
+    s += "'>";
+
+    s += "<label>Port</label>";
+    s += "<input type='number' name='port' value='";
+    s += String(mqttManager->getPort());
+    s += "' min='1' max='65535'>";
+
+    s += "<label>Username</label>";
+    s += "<input type='text' name='username' value='";
+    s += mqttManager->getUsername();
+    s += "'>";
+
+    s += "<label>Password</label>";
+    s += "<input type='password' name='password'>";
+
+    s += "<p class='muted'>";
+    s += "Leave password empty to keep the stored password.";
+    s += "</p>";
+
+    s += "<label>Base topic</label>";
+    s += "<input type='text' name='baseTopic' value='";
+    s += mqttManager->getBaseTopic();
+    s += "'>";
+
+    s += "<button type='submit'>Save & Restart</button>";
+
+    s += "</form>";
+
+    s += "<p><a href='/'>&larr; Back</a></p>";
+
+    s += htmlFooter();
+
+    server.send(200, "text/html", s);
+}
+
+void WebManager::handleMQTTSave()
+{
+    if (!mqttManager)
+    {
+        server.send(
+            500,
+            "text/plain",
+            "MQTT manager unavailable"
+        );
+
+        return;
+    }
+
+    bool enabled = server.hasArg("enabled");
+
+    String host = server.arg("host");
+    String username = server.arg("username");
+    String password = server.arg("password");
+    String baseTopic = server.arg("baseTopic");
+
+    uint16_t port = 1883;
+
+    if (server.hasArg("port"))
+    {
+        int value = server.arg("port").toInt();
+
+        if (value < 1 || value > 65535)
+        {
+            server.send(
+                400,
+                "text/plain",
+                "Invalid MQTT port"
+            );
+
+            return;
+        }
+
+        port = (uint16_t)value;
+    }
+
+    if (password.length() == 0)
+        password = "";
+
+    if (host.length() == 0 && enabled)
+    {
+        server.send(
+            400,
+            "text/plain",
+            "MQTT broker cannot be empty when MQTT is enabled"
+        );
+
+        return;
+    }
+
+    if (baseTopic.length() == 0)
+        baseTopic = "busware/TUL";
+
+    /*
+     * Keep the existing password if the field was left empty.
+     *
+     * We need a small helper for this.
+     */
+    if (server.arg("password").length() == 0)
+    {
+        // handled below by MQTTManager enhancement
+    }
+
+    mqttManager->saveConfig(
+        enabled,
+        host,
+        port,
+        username,
+        password,
+        baseTopic
+    );
+
+    String s = htmlHeader("MQTT");
+
+    s += "<h1>MQTT saved</h1>";
+    s += "<p>Device will restart and apply the MQTT configuration.</p>";
+
+    s += htmlFooter();
+
+    server.send(200, "text/html", s);
+
+    delay(500);
+    ESP.restart();
+}

@@ -22,6 +22,7 @@
 #include "busware.h"
 #include <WiFi.h>
 #include "WebManager.h"
+#include "MQTTManager.h"
 
 #ifdef USE_IMPROV
 #include <ImprovWiFiLibrary.h>
@@ -57,6 +58,11 @@ uint32_t knxTx = 0;
 
 
 WebManager webManager;
+
+MQTTManager mqttManager;
+
+void handleMQTT();
+void handleMQTTSave();
 
 uint32_t getUsbRx()
 {
@@ -157,6 +163,16 @@ webManager.begin(
     getUsbRx,
     getUsbTx,
     getKnxRx,
+    getKnxTx,
+    &mqttManager
+);
+
+mqttManager.begin(
+    MYNAME,
+    VERSION,
+    getUsbRx,
+    getUsbTx,
+    getKnxRx,
     getKnxTx
 );
 
@@ -204,6 +220,8 @@ webManager.begin(
 void loop()
 {
     webManager.loop();
+
+    mqttManager.loop();
 
     /*
      * Always feed the watchdog at the beginning of the loop.

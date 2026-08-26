@@ -4,20 +4,27 @@
 #include <WebServer.h>
 #include <Preferences.h>
 
+#include "MQTTManager.h"
+
 class WebManager
 {
+MQTTManager *mqttManager;
+
+void handleMQTT();
+void handleMQTTSave();
+
 public:
     WebManager();
 
-    void begin(
-        const char *deviceName,
-        const char *version,
-        uint32_t (*getUsbRx)(),
-        uint32_t (*getUsbTx)(),
-        uint32_t (*getKnxRx)(),
-        uint32_t (*getKnxTx)()
-    );
-
+void begin(
+    const char *deviceName,
+    const char *version,
+    uint32_t (*getUsbRx)(),
+    uint32_t (*getUsbTx)(),
+    uint32_t (*getKnxRx)(),
+    uint32_t (*getKnxTx)(),
+    MQTTManager *mqttManager
+);
     void loop();
 
     void logByte(const char direction, uint8_t value);

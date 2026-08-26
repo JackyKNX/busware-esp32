@@ -1016,11 +1016,15 @@ The main page provides:
 - firmware version
 - device name
 - WiFi connection status
+- WiFi SSID
 - IP address
 - MAC address
 - uptime
 - USB/KNX traffic counters
+- system health and diagnostics
+- MQTT connection status and diagnostics
 - WiFi configuration
+- MQTT configuration
 - firmware update
 - serial monitor
 
@@ -1090,6 +1094,142 @@ Because the WiFi credentials are stored separately from the application firmware
 Therefore, an ESP32 that has previously been configured for a WiFi network will normally reconnect to that network after a firmware update.
 
 A full flash erase/factory reset is different and may remove the stored credentials.
+
+---
+
+## MQTT status and diagnostics
+
+The TUL firmware includes an optional MQTT client for device status and diagnostics.
+
+MQTT is configured through the WebManager:
+
+```text
+/mqtt
+```
+
+The configuration includes:
+
+- MQTT enable/disable
+- broker hostname or IP address
+- broker port
+- username
+- password
+- base topic
+
+The default base topic is:
+
+```text
+busware/TUL
+```
+
+### MQTT topics
+
+The firmware publishes the following topics:
+
+```text
+busware/TUL/availability
+busware/TUL/status
+busware/TUL/event
+busware/TUL/error
+```
+
+### Availability
+
+`availability` uses MQTT retained state together with the MQTT Last Will and Testament (LWT):
+
+```text
+online
+offline
+```
+
+This allows monitoring software such as openHAB to determine whether the TUL device is currently connected to the MQTT broker.
+
+### Status
+
+`status` is a retained JSON snapshot of the current device state. It is published periodically and after a successful MQTT connection.
+
+Example:
+
+```json
+{
+  "firmware": "v1.4+57 - 2026-08-26 13:32:37",
+  "uptime": 80,
+  "ip": "10.192.160.57",
+  "ssid": "Centralna",
+  "rssi": -35,
+  "knx_rx": 134,
+  "knx_tx": 267,
+  "usb_rx": 267,
+  "usb_tx": 134,
+  "free_heap": 206480,
+  "min_free_heap": 180000,
+  "reset_reason": "Software reset"
+}
+```
+
+The status is intended for monitoring and diagnostics rather than KNX protocol transport.
+
+### Events
+
+`event` is a non-retained event stream. It is used for significant runtime events such as:
+
+```json
+{"type":"mqtt","event":"connected","uptime":10}
+```
+
+The event topic is not a heartbeat topic. Periodic health information belongs in `status`.
+
+### Errors
+
+`error` is a retained topic carrying the last reported error, for example MQTT-related failures.
+
+### MQTT diagnostics in WebManager
+
+The main WebManager page shows:
+
+- MQTT enabled/disabled state
+- MQTT connection state
+- broker address and port
+- base topic
+- status publish result
+- MQTT client state
+- last MQTT error
+
+The MQTT configuration is stored in ESP32 NVS using the Arduino `Preferences` mechanism. The MQTT password is not published through MQTT status messages or the WebManager status API.
+
+### MQTT and KNX architecture
+
+MQTT is a management/telemetry channel only. It does not replace the transparent KNX TPUART-to-USB path.
+
+The intended architecture remains:
+
+```text
+KNX TP
+  ↓
+NCN5130 TPUART
+  ↓
+ESP32-C3
+  ↓
+USB CDC
+  ↓
+knxd
+  ↓
+openHAB
+```
+
+while MQTT is used separately for:
+
+```text
+ESP32-C3
+  ↓
+WiFi
+  ↓
+MQTT broker
+  ↓
+monitoring / openHAB
+```
+
+The firmware does not publish KNX application telegrams through MQTT.
 
 ---
 
@@ -1208,6 +1348,8 @@ The WebManager provides three main functions:
 
 The WebManager does not replace the USB TPUART bridge.
 
+The WebManager also exposes MQTT configuration and device diagnostics. MQTT remains a separate management/telemetry path and is not used as the KNX transport.
+
 The KNX communication architecture remains:
 
 ```text
@@ -1297,6 +1439,8 @@ Current firmware functionality includes:
 - WebManager
 - Web OTA firmware update
 - browser-based Serial Monitor
+- MQTT status and diagnostics
+- MQTT broker configuration
 - mDNS when connected to WiFi
 - knxd tpuarts integration
 
