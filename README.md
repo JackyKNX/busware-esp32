@@ -1,1130 +1,144 @@
-# BUSWARE ESP32-C3 TUL --- KNX TPUART USB Serial Bridge
+# BUSWARE ESP32-C3 TUL — KNX TPUART USB Serial Bridge
 
-## Purpose
+Modified `USBSerial` firmware for **BUSWARE TUL / ESP32-C3 + NCN5130 TPUART**.
 
-This directory contains a modified `USBSerial` firmware for the BUSWARE ESP32-C3 TUL hardware.
+The ESP32-C3 acts as a **transparent USB CDC ↔ KNX TPUART bridge**. KNX protocol handling remains on Linux in `knxd`.
 
-The modification turns the ESP32-C3 into a **USB CDC ↔ KNX TPUART transparent bridge** for use with Linux `knxd`.
-
-The tested setup is:
-
-```
-KNX TP bus
-    │
-    ▼
+```text
+KNX TP
+  │
+  ▼
 NCN5130 TPUART
-    │ 38400 8E1
-    ▼
+  │ 38400 8E1
+  ▼
 ESP32-C3
-    │ USB CDC / USB Serial-JTAG
-    │ 115200
-    ▼
-Linux /dev/ttyACM0
-    │
-    ▼
+  │ USB CDC
+  ▼
+/dev/ttyACM0
+  │
+  ▼
+/dev/knx1
+  │
+  ▼
 knxd
-    │
-    ▼
-KNXnet/IP / local knxd socket
-
+  │
+  ▼
+openHAB / KNXnet/IP
 ```
 
-The firmware was tested with `knxd 0.14.75` using:
+Tested `knxd` configuration:
 
-```
+```text
 -b tpuarts:/dev/knx1
-
 ```
 
-where `/dev/knx1` is a persistent udev symlink to the ESP32 USB serial device.
+## Features
 
----
+- BUSWARE TUL / ESP32-C3 support
+- NCN5130 TPUART at `38400 8E1`
+- transparent bidirectional USB ↔ TPUART forwarding
+- USB/KNX traffic counters and activity LED
+- WiFi management and configuration AP
+- WebManager with health/diagnostic information
+- Web OTA firmware update with A/B partition switching
+- browser serial monitor
+- MQTT status and diagnostics
+- automatic firmware versioning and build numbering
+- mDNS
 
-## Difference from the original BUSWARE project
+The ESP32 does **not** implement the KNX application layer. `knxd` handles KNX protocol processing.
 
-This version is based on the original `busware-esp32` project, but the `Simple/USBSerial` implementation has been adapted specifically for **TUL + NCN5130 TPUART operation over USB**.
+## Build
 
-### 1. Dedicated TUL / TPUART implementation
+Build from `Simple/USBSerial`:
 
-The firmware explicitly selects the TUL transceiver:
-
-```
-#if defined(BUSWARE_TUL)
-TPUARTTransceiver Transceiver(&Serial0);
-#else
-#error "This firmware is intended for BUSWARE_TUL"
-#endif
-```
-
-The TPUART interface uses:
-
-```
-38400 baud
-8 data bits
-Even parity
-1 stop bit
-
-```
-
-The USB side remains the ESP32-C3 USB Serial/JTAG CDC interface at:
-
-```
-115200 baud
-
-```
-
-The relevant implementation is in:
-
-```
-Simple/USBSerial/src/main.ino
-
-```
-
----
-
-### 2. True transparent USB ↔ TPUART data forwarding
-
-The bridge forwards KNX TPUART data directly between:
-
-- USB CDC (`Serial`)
-- hardware UART connected to the NCN5130 (`Serial0`)
-
-The implementation deliberately avoids using:
-
-```
-readBytes(buffer, available())
-```
-
-because `available()` is only a snapshot of currently buffered data and `readBytes()` may wait for the requested number of bytes.
-
-Instead, data is transferred incrementally so that the bridge does not wait for a complete `available()` block.
-
-This is important for reliable operation with KNX telegram timing.
-
----
-
-### 3. Runtime traffic statistics
-
-The modified firmware maintains four counters:
-
-```
-usbRx
-usbTx
-knxRx
-knxTx
-
-```
-
-They provide a simple indication of traffic flowing in both directions.
-
-The firmware periodically prints a status line every 10 seconds:
-
-```
-STATUS usbRx=14011 usbTx=15595 knxRx=15595 knxTx=14011 avail=0
-
-```
-
-Interpretation:
-
----
-
-Counter Meaning
-
----
-
-`usbRx` bytes received from USB
-
-`usbTx` bytes transmitted to USB
-
-`knxRx` bytes received from KNX / TPUART
-
-`knxTx` bytes transmitted to KNX / TPUART
-
-## `avail` currently available bytes in the relevant serial receive buffer
-
-The counters were observed increasing continuously during the KNX test.
-
----
-
-### 4. Activity indication
-
-The firmware keeps activity timing information and controls the board LED to provide a local indication of communication activity.
-
-The activity timing is defined by:
-
-```
-#define LED_ACTIVITY_MS 500
-```
-
----
-
-### 5. PlatformIO environment dedicated to TUL
-
-The project contains the dedicated environment:
-
-```
-[env:busware-tul-c3-serial-transparent]
-board = busware_esp32c3
-board_build.variant = busware32c3
-monitor_speed = 115200
-build_flags = ${env.build_flags}
-        -DBUSWARE_TUL
-        -DUSB_PRODUCT=\"NCN5130\"
-```
-
-The environment can be built with:
-
-```
+```bash
 cd Simple/USBSerial
 pio run -e busware-tul-c3-serial-transparent
 ```
 
-The project uses the existing BUSWARE ESP32-C3 board definition and variant.
+Generated images:
 
----
-
-## Tested hardware
-
-The tested ESP32-C3 enumerates as:
-
-```
-USB VID:PID = 303a:1001
-Manufacturer = Espressif
-Product = USB JTAG/serial debug unit
-
-```
-
-Linux exposes it as:
-
-```
-/dev/ttyACM0
-
-```
-
-The tested ESP32-C3 has:
-
-```
-ESP32-C3
-4 MB embedded flash
-USB Serial/JTAG
-
-```
-
----
-
-## Tested software
-
-The firmware was built with PlatformIO using:
-
-```
-PlatformIO Core 6.1.19
-Espressif32 platform 7.0.1
-Arduino-ESP32 framework
-esptool 4.11.0
-
-```
-
-The resulting firmware was successfully flashed and tested on an ESP32-C3.
-
-The factory image generated by the project is:
-
-```
+```text
 firmware/busware-tul-c3-serial-transparent.factory.bin
-
-```
-
-and the OTA/application image:
-
-```
 firmware/busware-tul-c3-serial-transparent.ota.bin
-
 ```
 
----
+Use the factory image for initial/full flashing and the OTA image for normal WebManager updates.
 
-## knxd integration
+## KNX / Linux integration
 
-For Linux/knxd, the ESP32 should be exposed through a stable device name instead of relying directly on `/dev/ttyACM0`.
-
-Example udev rule:
-
-```
-ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", KERNELS=="<USB_PORT>", SYMLINK+="knx1", OWNER="knxd", GROUP="dialout", MODE="0660"
-
-```
-
-After applying the rule:
-
-```
-/dev/knx1 -> /dev/ttyACM0
-
-```
-
-`knxd` is configured with:
-
-```
--b tpuarts:/dev/knx1
-
-```
+Use a persistent udev name instead of relying on `/dev/ttyACM0`.
 
 Example:
 
+```text
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", KERNELS=="<USB_PORT>", SYMLINK+="knx1", OWNER="knxd", GROUP="dialout", MODE="0660"
 ```
-/opt/knxd/bin/knxd \
-  -e 1.1.110 \
-  -E 1.1.111:8 \
-  -D \
-  -T \
-  -R \
-  -S \
-  -u /run/knx \
-  -b tpuarts:/dev/knx1 \
-  -f 9 \
-  -t 252
-```
-
-The tested configuration successfully handled KNX telegrams in both directions.
-
----
-
-## Important diagnostic note
-
-The USB serial device must **not** be opened by another program while `knxd` is using it.
-
-For example, do not run:
-
-```
-python3 -m serial.tools.miniterm /dev/ttyACM0 115200
-```
-
-while `knxd` is connected to:
-
-```
-/dev/knx1 -> /dev/ttyACM0
-
-```
-
-Doing so caused the tested `knxd` instance to report:
-
-```
-Communication error: Resource temporarily unavailable
-Link down, terminating
-
-```
-
-This was caused by concurrent access to the serial device, not by a KNX/TPUART communication failure.
-
-For normal diagnostics, use the KNX side of `knxd`, for example:
-
-```
-/opt/knxd/bin/knxtool groupsocketlisten local:/run/knx
-```
-
-instead of opening the USB serial device directly.
-
----
-
-## Verification performed
-
-The modified firmware was tested with sustained KNX traffic.
-
-Observed firmware counters reached values such as:
-
-```
-STATUS usbRx=14011 usbTx=15595 knxRx=15595 knxTx=14011 avail=0
-
-```
-
-`knxd 0.14.75` successfully:
-
-- received KNX telegrams from the TPUART interface,
-- transmitted telegrams to the KNX bus,
-- exposed the KNX connection through its local socket,
-- operated continuously without USB disconnect/reset events.
-
-The Linux kernel showed normal USB enumeration:
-
-```
-usb 1-1: New USB device found, idVendor=303a, idProduct=1001
-cdc_acm 1-1:1.0: ttyACM0: USB ACM device
-
-```
-
-No subsequent USB disconnect/reset was observed during the standalone `knxd` test.
-
----
-
-## Scope
-
-This modification is intentionally focused on:
-
-```
-BUSWARE TUL
-ESP32-C3
-NCN5130 TPUART
-USB CDC
-knxd tpuarts backend
-
-```
-
-It does not attempt to redesign the other BUSWARE ESP32 firmware variants.
-
-The other PlatformIO environments remain available in `platformio.ini`, while the tested production target is:
-
-```
-busware-tul-c3-serial-transparent
-
-```
-
----
-
-## Original project
-
-Base project:
-
-**BUSWARE ESP32**
-
-Repository:
-
-```
-https://github.com/tostmann/busware-esp32
-
-```
-
-This document describes the local modifications made for the KNX TPUART USB serial bridge and the configuration used for the tested `knxd` integration.
-
----
-
-## Current status
-
-**Tested and working.**
-
-The firmware has been successfully built and flashed to an ESP32-C3 TUL and has been tested with `knxd 0.14.75` and real KNX bus traffic in both directions.
-
-## What exactly was changed in the ESP32 ↔ KNX communication approach
-
-The most important change is architectural: **the ESP32 is no longer treated as a device that should understand or reconstruct KNX communication at the application level. It is used as a low-level, byte-transparent USB ↔ TPUART bridge.**
-
-The division of responsibilities is now:
-
-```
-                 ESP32-C3 / TUL
-                 ┌──────────────┐
-KNX TP bus ─────►│ NCN5130      │
-                 │ TPUART       │
-                 │ 38400 8E1    │
-                 │      │       │
-                 │  Serial0     │
-                 │      │       │
-                 │ transparent  │
-                 │ byte bridge  │
-                 │      │       │
-                 │ USB CDC      │
-                 └──────┼───────┘
-                        │
-                  /dev/ttyACM0
-                        │
-                  /dev/knx1
-                        │
-                       knxd
-                        │
-                 KNX protocol stack
-
-```
-
-### 1. We moved KNX protocol handling out of the ESP32
-
-The ESP32 does **not** implement the KNX group-address/application protocol.
-
-It does not:
-
-- decode group addresses,
-- interpret DPTs,
-- build KNX group telegrams,
-- maintain KNX application state,
-- expose a proprietary TCP protocol,
-- convert KNX telegrams into another application format.
-
-Instead, it forwards the raw TPUART byte stream.
-
-This is important because `knxd` already provides the KNX protocol handling required by the Linux/openHAB side.
-
-The ESP32 therefore remains deliberately simple:
-
-```
-KNX/TPUART bytes
-      ⇅
-ESP32
-      ⇅
-USB CDC bytes
-
-```
-
-### 2. The NCN5130 is used as the actual KNX physical/transceiver layer
-
-The TUL hardware already contains the NCN5130 TPUART interface.
-
-Our firmware explicitly instantiates:
-
-```
-TPUARTTransceiver Transceiver(&Serial0);
-```
-
-and restricts this firmware target to:
-
-```
-#define BUSWARE_TUL
-```
-
-Therefore the ESP32 is not trying to bit-bang KNX TP or implement the physical KNX layer itself.
-
-The communication path is:
-
-```
-KNX TP
-  ↓
-NCN5130
-  ↓
-ESP32 Serial0
-
-```
-
-with TPUART serial parameters:
-
-```
-38400 baud
-8 data bits
-Even parity
-1 stop bit
-
-```
-
-### 3. USB became a transparent transport rather than an application interface
-
-On the PC/Linux side the ESP32 appears as:
-
-```
-/dev/ttyACM0
-
-```
-
-and, through udev:
-
-```
-/dev/knx1
-
-```
-
-`knxd` opens this device directly using:
-
-```
-tpuarts:/dev/knx1
-
-```
-
-There is therefore no additional daemon or custom protocol between the ESP32 and `knxd`.
-
-The complete path is:
-
-```
-KNX TP
- → NCN5130
- → ESP32 Serial0
- → USB CDC
- → /dev/ttyACM0
- → /dev/knx1
- → knxd tpuarts backend
-
-```
-
-### 4. We changed the forwarding logic to be byte-incremental
-
-A critical part of the implementation is that the bridge does **not** assume that all currently available bytes form one complete KNX telegram.
-
-The firmware explicitly avoids:
-
-```
-readBytes(buffer, available())
-```
-
-because:
-
-```
-available()
-
-```
-
-is only a snapshot of data currently present in the receive buffer.
-
-If fewer bytes than requested are available, `readBytes()` can wait for more data. That introduces unnecessary blocking into a transparent bridge.
-
-The new approach is therefore:
-
-```
-check USB
-  ↓
-forward available bytes immediately
-
-check TPUART
-  ↓
-forward available bytes immediately
-
-repeat
-
-```
-
-The bridge does not wait for a complete application-level packet before forwarding data.
-
-### 5. Both communication directions are handled independently
-
-The bridge is bidirectional:
-
-```
-USB → KNX
-KNX → USB
-
-```
-
-and maintains separate counters:
-
-```
-uint32_t usbRx = 0;
-uint32_t usbTx = 0;
-uint32_t knxRx = 0;
-uint32_t knxTx = 0;
-```
-
-This allows us to verify that traffic is actually crossing both interfaces.
-
-For example:
-
-```
-STATUS usbRx=14011 usbTx=15595 knxRx=15595 knxTx=14011 avail=0
-
-```
-
-shows that data is flowing in both directions rather than merely proving that the USB device is alive.
-
-### 6. We deliberately removed the need for an ESP32-side TCP/IP bridge
-
-The final KNX communication path does **not** require:
-
-```
-KNX → ESP32 → Wi-Fi → TCP → Linux → custom application
-
-```
-
-or:
-
-```
-KNX → ESP32 → MQTT → Linux → KNX
-
-```
-
-Instead we use:
-
-```
-KNX → ESP32 → USB → knxd
-
-```
-
-This removes an entire network/protocol layer.
-
-For the intended use with Linux and openHAB this is preferable because `knxd` can work directly with the TPUART stream and remains responsible for KNX protocol semantics.
-
-### 7. `knxd` is now the single KNX protocol endpoint on Linux
-
-The ESP32 has a deliberately narrow responsibility.
-
-**ESP32:**
-
-```
-physical TPUART ↔ USB byte transport
-
-```
-
-**knxd:**
 
-```
-TPUART ↔ KNX protocol ↔ KNXnet/IP / local socket
-
-```
-
-**openHAB:**
-
-```
-KNX items/things/rules ↔ knxd
-
-```
-
-This separation makes troubleshooting much easier.
-
-For example:
-
-- if `knxd` cannot open `/dev/knx1` → Linux/USB/udev problem;
-- if `knxd` opens the device but no KNX traffic is visible → TPUART/ESP32/KNX bus problem;
-- if `knxd` sees telegrams but openHAB does not → knxd/openHAB integration problem.
-
-### 8. We intentionally do not use a second program to inspect the serial stream
-
-The USB device is now an active transport endpoint for `knxd`.
-
-Therefore:
+Then:
 
+```text
+-b tpuarts:/dev/knx1
 ```
-knxd
-   │
-   └── /dev/knx1
 
-```
-
-must normally be the only process opening the device.
-
-Opening `/dev/ttyACM0` simultaneously with `miniterm`, `screen` or another serial program can result in:
-
-```
-Resource temporarily unavailable
-
-```
+Do not open the same serial device with another program while `knxd` owns it.
 
-or:
+For KNX diagnostics:
 
-```
-device disconnected or multiple access on port?
-
-```
-
-This is expected behaviour for the shared serial endpoint and is not evidence of a KNX protocol problem.
-
-For KNX-level diagnostics we should use `knxd` tools, e.g.:
-
-```
+```bash
 knxtool groupsocketlisten local:/run/knx
 ```
 
-rather than attaching another serial reader to the ESP32.
-
-### Summary of the communication redesign
-
-The key change can be summarized in one sentence:
-
-> **We changed the ESP32 from a KNX-aware/application-level communication device into a minimal, transparent TPUART-to-USB transport bridge, leaving KNX protocol processing to ****`knxd`****.**
-
-This gives us a much cleaner architecture:
-
-```
-┌──────────────┐
-│ KNX TP       │
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│ NCN5130      │  Physical / TPUART layer
-└──────┬───────┘
-       │ 38400 8E1
-┌──────▼───────┐
-│ ESP32-C3     │  Transparent byte bridge
-└──────┬───────┘
-       │ USB CDC
-┌──────▼───────┐
-│ Linux        │
-│ /dev/knx1    │
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│ knxd         │  KNX protocol processing
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│ openHAB      │
-└──────────────┘
-
-```
-
-The resulting design minimizes firmware complexity, avoids duplicating KNX protocol logic in the ESP32, and provides a direct and testable path from the physical KNX bus to the Linux KNX stack.
-
----
-
-## Acknowledgements and licensing
-
-### Acknowledgements
-
-This project is based on the original Busware ESP32 project and builds on the work of its original author and contributors.
-
-**Many thanks to the original author(s) and contributors of the Busware ESP32 project for making the original implementation available and for the work on the Busware transceiver support, hardware integration and firmware foundation on which this version is based.**
-
-This fork does not intend to diminish or replace the original project. The modifications described in this document were made specifically to support the **Busware TUL / ESP32-C3 + NCN5130 TPUART → USB CDC → knxd** use case.
-
-Please retain the original attribution, copyright notices and license information from the upstream project in any redistribution of code derived from it.
-
-### License / copyright notice
-
-This repository contains modifications and derivative work based on an existing upstream project.
-
-Unless a particular source file explicitly states otherwise:
-
-- the **original copyright remains with the original author(s) / copyright holder(s)**;
-- the original license terms applicable to the upstream source code continue to apply to that source code and derivative portions;
-- this fork does **not** claim ownership of the original Busware source code;
-- modifications made in this fork are intended to be distributed together with the applicable upstream license and attribution notices;
-- third-party libraries and components retain their own respective licenses.
-
-**Important:** the exact license of the upstream project must be taken from the original repository's `LICENSE`, `COPYING`, source-file headers or other authoritative upstream licensing information. This README does not replace that license and does not grant any additional rights beyond those provided by the applicable upstream license.
-
-If this repository is redistributed, the original license text and copyright notices should be preserved. Where practical, the upstream project URL and the fact that this is a modified fork should also be retained.
-
-### Fork-specific modifications
-
-The changes documented in the **Files changed in this fork** section are modifications made for this particular KNX/TPUART use case. They should be considered fork-specific changes and should not be interpreted as part of the original upstream project.
-
-For clarity, the project architecture is:
-
-```
-Original Busware project
-        │
-        ├── original transceiver / hardware support
-        │
-        ▼
-This fork
-        │
-        ├── TUL / ESP32-C3 TPUART support
-        ├── transparent USB CDC bridge
-        ├── diagnostic counters / status
-        └── knxd integration
-
-```
-
-When publishing patches or improvements upstream, the changes should be clearly identified as fork-specific modifications rather than presented as original upstream code.
-
-## Files changed in this fork
-
-The changes are intentionally concentrated in the firmware path used for the TUL / ESP32-C3 USB-to-TPUART bridge. The original project contains additional transceiver and TCP-bridge functionality; the `USBSerial` target is configured to use the transparent USB/TPUART path.
-
-### 1. `Simple/USBSerial/src/main.ino`
-
-**Main functional change — the firmware was turned into a transparent TPUART ↔ USB bridge.**
-
-Changes include:
-
-- target explicitly selected as `BUSWARE_TUL`;
-- `TPUARTTransceiver` is instantiated on `Serial0`;
-- TPUART side uses the KNX-compatible `38400 8E1` serial configuration;
-- USB side uses the ESP32 USB Serial/JTAG CDC interface;
-- USB → TPUART traffic is forwarded byte-by-byte / incrementally;
-- TPUART → USB traffic is forwarded byte-by-byte / incrementally;
-- the firmware does not try to interpret KNX group telegrams or DPTs;
-- added traffic counters:
-  - `usbRx`
-  - `usbTx`
-  - `knxRx`
-  - `knxTx`
-- added periodic status output so the bridge can be monitored without decoding KNX traffic;
-- activity handling / LED indication is retained for physical diagnostics;
-- the code explicitly documents why `readBytes(buffer, available())` must not be used in this bridge;
-- watchdog servicing was added where required by the final forwarding loop.
-
-The resulting firmware has one simple responsibility:
-
-```
-USB CDC ⇄ raw TPUART serial stream
-
-```
-
-The KNX protocol itself is handled by `knxd`.
-
-The final source contains the explicit `TPUARTTransceiver Transceiver(&Serial0)` definition and the four traffic counters. This is visible in the development history of the final source.
-
-### 2. `lib/busware/busware.h`
-
-**Added/extended the transceiver abstraction with a TPUART-specific implementation.**
-
-The generic transceiver interface remains available:
-
-```
-available()
-read()
-write()
-readBytes()
-begin()
-```
-
-A dedicated:
-
-```
-TPUARTTransceiver
-```
-
-was added for the TUL/NCN5130 path.
-
-Its purpose is to make the physical TPUART serial interface explicit instead of treating the TUL as an arbitrary generic serial device.
-
-The implementation is selected from the TUL firmware target and is connected to:
-
-```
-Serial0
-```
-
-This change was necessary because the original generic transceiver abstraction did not provide the required `TPUARTTransceiver` type; the intermediate build failure explicitly showed that `main.ino` could not resolve that class until the library header was corrected.
-
-### 3. `Simple/USBSerial/platformio.ini`
-
-**Configured a dedicated TUL ESP32-C3 build target for the transparent bridge.**
-
-The important target is:
-
-```
-[env:busware-tul-c3-serial-transparent]
-board = busware_esp32c3
-board_build.variant = busware32c3
-monitor_speed = 115200
-build_flags = ${env.build_flags}
-    -DBUSWARE_TUL
-    -DUSB_PRODUCT=\"NCN5130\"
-```
-
-The project also uses the repository-local:
-
-```
-../../lib
-
-```
-
-library directory and the existing build/versioning scripts.
-
-For this target the TCP bridge is ignored:
-
-```
-lib_ignore =
-    TCPBridge
-```
-
-This is intentional. The production communication architecture is:
-
-```
-KNX TP
-  ↕
-NCN5130 / TPUART
-  ↕
-ESP32-C3
-  ↕ USB CDC
-/dev/knx1
-  ↕
-knxd
-
-```
-
-rather than:
-
-```
-KNX
-  ↕
-ESP32
-  ↕
-TCP/Wi-Fi
-  ↕
-custom bridge
-
-```
-
-### 4. `lib/busware/library.json`
-
-**Added library metadata for the local Busware library.**
-
-The library is declared as:
-
-```
-{
-    "name": "busware",
-    "version": "1.0.0",
-    "description": "Busware transceiver library",
-    "frameworks": "arduino",
-    "platforms": "espressif32"
-}
-```
-
-This allows PlatformIO's library dependency handling to recognize the local Busware transceiver library cleanly.
-
-### 5. `lib/TCPBridge/library.json`
-
-**Added/standardized metadata for the existing TCPBridge library.**
-
-It is declared as:
-
-```
-{
-    "name": "TCPBridge",
-    "version": "1.0.0",
-    "description": "TCP bridge for busware transceivers",
-    "frameworks": "arduino",
-    "platforms": "espressif32"
-}
-```
-
-The TCP bridge remains part of the repository for the other project targets, but it is deliberately excluded from the `USBSerial` TUL transparent-bridge build.
-
-### 6. `README.md`
-
-**Added project-specific documentation for this fork.**
-
-The README now documents:
-
-- the purpose of the modified firmware;
-- the ESP32-C3 / TUL hardware architecture;
-- the NCN5130 TPUART role;
-- the USB CDC interface;
-- the exact ESP32 ↔ KNX communication architecture;
-- why KNX protocol processing belongs in `knxd`;
-- the incremental byte-forwarding approach;
-- the diagnostic counters;
-- the `/dev/knx1` Linux integration;
-- why another program must not open `/dev/ttyACM0` while `knxd` owns it;
-- the tested communication path and operational considerations;
-- this file-by-file change list.
-
----
-
-## What was **not** changed conceptually
-
-We did **not** create another KNX protocol implementation inside the ESP32.
-
-The following remain outside the ESP32 firmware:
-
-- KNX group-address interpretation;
-- DPT interpretation;
-- KNXnet/IP;
-- group socket handling;
-- KNX routing / tunnelling logic;
-- openHAB integration.
-
-Those functions remain the responsibility of `knxd` and the software above it.
-
-This is the central design decision of the fork.
-
----
-
 ## Web Management
 
-The TUL firmware includes an integrated HTTP-based management interface.
-
-The web server runs directly on the ESP32-C3 and is available on:
+Open:
 
 ```text
 http://<ESP32-IP>/
 ```
 
-The main page provides:
+The WebManager provides firmware/version information, WiFi SSID/IP/RSSI, system health, USB/KNX counters, MQTT diagnostics, WiFi/MQTT configuration, OTA update, serial monitor and restart.
 
-- firmware version
-- device name
-- WiFi connection status
-- WiFi SSID
-- IP address
-- MAC address
-- uptime
-- USB/KNX traffic counters
-- system health and diagnostics
-- MQTT connection status and diagnostics
-- WiFi configuration
-- MQTT configuration
-- firmware update
-- serial monitor
+### WiFi
 
-The web interface is implemented by:
+Credentials are stored in ESP32 NVS and survive normal OTA updates.
+
+If no WiFi configuration exists, the TUL starts:
 
 ```text
-Simple/USBSerial/src/WebManager.cpp
-Simple/USBSerial/src/WebManager.h
+SSID: TUL-XXXXXX
+Password: tulsetup
+IP: 192.168.4.1
 ```
 
-### Main Web Interface
+Open `http://192.168.4.1/` and select **WiFi configuration**.
 
-The root page is:
+## MQTT
 
-```text
-/
-```
+MQTT is an optional **management/telemetry** channel. It does not replace the KNX USB path.
 
-It displays the current device and communication status.
-
-### WiFi configuration
-
-WiFi credentials are stored in ESP32 non-volatile storage (NVS) using the Arduino `Preferences` mechanism.
-
-The firmware does not require a WiFi network to be compiled into the firmware.
-
-The configured network is stored on the ESP32 and survives normal firmware updates.
-
-### First boot / no configured network
-
-If no WiFi credentials are stored, the ESP32 starts its own configuration access point.
-
-The SSID has the form:
-
-```text
-TUL-XXXXXX
-```
-
-where `XXXXXX` is derived from the ESP32 chip ID.
-
-Default configuration AP password:
-
-```text
-tulsetup
-```
-
-The configuration AP normally uses:
-
-```text
-192.168.4.1
-```
-
-Open:
-
-```text
-http://192.168.4.1/
-```
-
-and select **WiFi configuration**.
-
-After saving valid WiFi credentials, the ESP32 connects to the configured network and stores the credentials in NVS.
-
-### Firmware updates and stored WiFi credentials
-
-Because the WiFi credentials are stored separately from the application firmware, installing a normal OTA/application firmware update does not normally erase them.
-
-Therefore, an ESP32 that has previously been configured for a WiFi network will normally reconnect to that network after a firmware update.
-
-A full flash erase/factory reset is different and may remove the stored credentials.
-
----
-
-## MQTT status and diagnostics
-
-The TUL firmware includes an optional MQTT client for device status and diagnostics.
-
-MQTT is configured through the WebManager:
+Configure MQTT at:
 
 ```text
 /mqtt
 ```
 
-The configuration includes:
+Parameters:
 
-- MQTT enable/disable
-- broker hostname or IP address
-- broker port
-- username
-- password
+- enable/disable
+- broker hostname/IP
+- port
+- username/password
 - base topic
 
-The default base topic is:
+Default:
 
 ```text
 busware/TUL
 ```
 
-### MQTT topics
-
-The firmware publishes the following topics:
+Topics:
 
 ```text
 busware/TUL/availability
@@ -1133,150 +147,56 @@ busware/TUL/event
 busware/TUL/error
 ```
 
-### Availability
+`availability` uses retained `online/offline` state and MQTT LWT.
 
-`availability` uses MQTT retained state together with the MQTT Last Will and Testament (LWT):
-
-```text
-online
-offline
-```
-
-This allows monitoring software such as openHAB to determine whether the TUL device is currently connected to the MQTT broker.
-
-### Status
-
-`status` is a retained JSON snapshot of the current device state. It is published periodically and after a successful MQTT connection.
+`status` is retained JSON containing firmware, uptime, IP, SSID, RSSI, USB/KNX counters, heap and reset reason.
 
 Example:
 
 ```json
 {
-  "firmware": "v1.4+57 - 2026-08-26 13:32:37",
-  "uptime": 80,
+  "firmware": "v1.4+50",
+  "uptime": 123456,
   "ip": "10.192.160.57",
   "ssid": "Centralna",
-  "rssi": -35,
-  "knx_rx": 134,
-  "knx_tx": 267,
-  "usb_rx": 267,
-  "usb_tx": 134,
-  "free_heap": 206480,
-  "min_free_heap": 180000,
+  "rssi": -57,
+  "knx_rx": 12345,
+  "knx_tx": 6789,
+  "usb_rx": 2345,
+  "usb_tx": 3456,
+  "free_heap": 184320,
+  "min_free_heap": 172456,
   "reset_reason": "Software reset"
 }
 ```
 
-The status is intended for monitoring and diagnostics rather than KNX protocol transport.
+`event` is a non-retained event stream. `error` stores the last reported error as a retained message.
 
-### Events
+## OTA / A-B update
 
-`event` is a non-retained event stream. It is used for significant runtime events such as:
-
-```json
-{"type":"mqtt","event":"connected","uptime":10}
-```
-
-The event topic is not a heartbeat topic. Periodic health information belongs in `status`.
-
-### Errors
-
-`error` is a retained topic carrying the last reported error, for example MQTT-related failures.
-
-### MQTT diagnostics in WebManager
-
-The main WebManager page shows:
-
-- MQTT enabled/disabled state
-- MQTT connection state
-- broker address and port
-- base topic
-- status publish result
-- MQTT client state
-- last MQTT error
-
-The MQTT configuration is stored in ESP32 NVS using the Arduino `Preferences` mechanism. The MQTT password is not published through MQTT status messages or the WebManager status API.
-
-### MQTT and KNX architecture
-
-MQTT is a management/telemetry channel only. It does not replace the transparent KNX TPUART-to-USB path.
-
-The intended architecture remains:
+The TUL uses:
 
 ```text
-KNX TP
-  ↓
-NCN5130 TPUART
-  ↓
-ESP32-C3
-  ↓
-USB CDC
-  ↓
-knxd
-  ↓
-openHAB
+0x10000   app0   1280K
+0x150000  app1   1280K
 ```
 
-while MQTT is used separately for:
+Normal WebManager OTA writes the inactive slot, verifies the image and selects it for the next boot.
+
+Tested both directions:
 
 ```text
-ESP32-C3
-  ↓
-WiFi
-  ↓
-MQTT broker
-  ↓
-monitoring / openHAB
+app0 → app1 → reboot → app1
+app1 → app0 → reboot → app0
 ```
 
-The firmware does not publish KNX application telegrams through MQTT.
-
----
-
-## Web OTA firmware update
-
-The firmware contains an integrated OTA update page.
-
-Open:
-
-```text
-/update
-```
-
-or use the **Firmware update** link from the main page.
-
-The OTA endpoint is protected by HTTP authentication.
-
-Current firmware credentials are:
-
-```text
-Username: admin
-Password: tul
-```
-
-The OTA image to upload is:
+For WebManager OTA use:
 
 ```text
 firmware/busware-tul-c3-serial-transparent.ota.bin
 ```
 
-For a normal OTA update, use the `.ota.bin` image rather than the factory image.
-
-### Factory image
-
-The complete factory image is:
-
-```text
-firmware/busware-tul-c3-serial-transparent.factory.bin
-```
-
-It contains the bootloader, partition table, boot application and application firmware and is intended for initial/full flashing with `esptool`.
-
----
-
-## Web Serial Monitor
-
-The firmware also provides a browser-based serial monitor.
+## Serial monitor
 
 Open:
 
@@ -1284,372 +204,57 @@ Open:
 /serial
 ```
 
-or click **Serial monitor** on the main page.
-
-The monitor displays the raw TPUART traffic observed by the ESP32.
-
-Example:
-
-```text
-16:51:51 TX 11
-16:51:51 TX 80 BC 81 11 82 70 83 7C 84 01 85 D1 86 00 87 81 48 0F
-16:51:51 RX BC 11 70 7C 01 D1 00 81 0F 8B
-```
-
-The monitor provides:
-
-- TX/RX direction
-- timestamp
-- hexadecimal byte representation
-- automatic scrolling
-- clear function
-
-The browser retrieves serial data through:
-
-```text
-/api/serial
-```
-
-### Important
-
-The Web Serial Monitor is intended primarily for diagnostics.
-
-The actual KNX communication endpoint remains the USB CDC interface used by `knxd`.
-
-When `knxd` is using:
-
-```text
-/dev/knx1
-```
-
-the browser serial monitor is a diagnostic view of traffic processed by the ESP32 firmware. It is not an additional KNX protocol endpoint.
-
----
-
-## Web Manager architecture
-
-The WebManager provides three main functions:
-
-```text
-                 ESP32-C3 TUL
-                ┌──────────────┐
-                │  WebManager  │
-                ├──────────────┤
-                │ WiFi manager │
-                │ HTTP server  │
-                │ OTA update   │
-                │ Serial view  │
-                └──────┬───────┘
-                       │
-                 WiFi / HTTP
-                       │
-                 Web browser
-```
-
-The WebManager does not replace the USB TPUART bridge.
-
-The WebManager also exposes MQTT configuration and device diagnostics. MQTT remains a separate management/telemetry path and is not used as the KNX transport.
-
-The KNX communication architecture remains:
-
-```text
-KNX TP
-  ↓
-NCN5130 TPUART
-  ↓
-ESP32-C3 Serial0
-  ↓
-transparent bridge
-  ↓
-USB CDC
-  ↓
-/dev/knx1
-  ↓
-knxd
-  ↓
-openHAB
-```
-
-WiFi is used for device management and diagnostics:
-
-```text
-ESP32-C3
-   │
-   └── WiFi
-        └── HTTP WebManager
-             ├── Status
-             ├── WiFi configuration
-             ├── OTA update
-             └── Serial monitor
-```
-
-The WebManager therefore does not introduce a WiFi/TCP dependency into the KNX data path.
-
----
-
-## Production firmware update workflow
-
-For a new production device:
-
-1. Build the firmware:
-
-```bash
-cd Simple/USBSerial
-pio run -e busware-tul-c3-serial-transparent
-```
-
-2. Initial USB flashing uses:
-
-```text
-firmware/busware-tul-c3-serial-transparent.factory.bin
-```
-
-3. After the ESP32 has been configured for WiFi, subsequent firmware updates can normally be performed using:
-
-```text
-firmware/busware-tul-c3-serial-transparent.ota.bin
-```
-
-through the WebManager.
-
-4. After the update, the ESP32 should reconnect automatically using the previously stored WiFi credentials.
-
----
-
-## Current production target
-
-The tested production environment is:
-
-```text
-busware-tul-c3-serial-transparent
-```
-
-Current firmware functionality includes:
-
-- ESP32-C3 TUL support
-- NCN5130 TPUART
-- transparent USB ↔ TPUART bridge
-- 38400 8E1 TPUART interface
-- USB CDC
-- traffic counters
-- activity LED
-- WiFi management
-- WiFi credentials stored in NVS
-- configuration AP fallback
-- WebManager
-- Web OTA firmware update
-- browser-based Serial Monitor
-- MQTT status and diagnostics
-- MQTT broker configuration
-- mDNS when connected to WiFi
-- knxd tpuarts integration
-
-The firmware has been tested with real KNX traffic in both directions.
-
----
-
----
+It is a diagnostic view of raw TPUART traffic.
 
 ## Firmware versioning
 
-The firmware uses automatic build versioning generated by the PlatformIO pre-build script:
+Automatic versioning is generated by:
 
 ```text
 pio-tools/buildscript_versioning.py
 ```
 
-The generated header is:
+Generated header:
 
 ```text
 Simple/USBSerial/include/version.h
 ```
 
-It contains:
-
-```text
-BUILD_NUMBER
-VERSION_SHORT
-VERSION
-BUILD_TIME
-GIT_COMMIT
-```
-
-Example:
-
-```text
-Firmware: v1.4+50
-Build:    50
-Built:    2026-08-26 11:25:34
-Git:      2b90699
-```
-
-The version format is:
+Version format:
 
 ```text
 v<major.minor>+<build>
 ```
 
-The build number is automatically incremented for every successful PlatformIO build. The build counter is stored locally in:
+The build counter is stored in `.buildcounter` and excluded from Git. `version.h` should not be edited manually.
+
+## Tested
+
+Production target:
 
 ```text
-.buildcounter
+busware-tul-c3-serial-transparent
 ```
 
-and is intentionally excluded from Git.
+Tested with:
 
-`version.h` is a generated build artifact and should not be edited manually.
+- ESP32-C3 / 4 MB flash
+- BUSWARE TUL / NCN5130 TPUART
+- PlatformIO / Espressif32 7.0.1
+- Arduino-ESP32
+- `knxd 0.14.75`
+- real KNX traffic in both directions
 
-### Building the firmware
+## Project origin
 
-`platformio.ini` is located in `Simple/USBSerial`, therefore the build must be started from that directory:
+Based on the original **BUSWARE ESP32** project:
 
-```bash
-cd Simple/USBSerial
-pio run -e busware-tul-c3-serial-transparent
-```
+https://github.com/tostmann/busware-esp32
 
-Running `pio run` from the repository root is not supported because there is no `platformio.ini` in the repository root.
+This fork adds the TUL / ESP32-C3 TPUART USB bridge, WebManager, OTA handling, diagnostics and MQTT telemetry.
 
----
+## Security
 
-## OTA / A-B firmware update
+Current development/test WebOTA credentials are defined in the firmware source. Replace the common embedded credentials before wider deployment.
 
-The ESP32-C3 TUL uses an A/B OTA partition layout:
-
-```text
-0x10000   app0   1280K
-0x150000  app1   1280K
-```
-
-The active application can therefore be replaced in the inactive partition and the boot partition switched after successful validation.
-
-The tested OTA flow is:
-
-```text
-app0 → app1 → reboot → app1
-app1 → app0 → reboot → app0
-```
-
-Both directions have been successfully verified on the tested TUL device.
-
-The OTA update reports:
-
-```text
-OTA: written partition: app1
-OTA: boot partition: app1
-OTA: update verified
-OTA: validation successful
-```
-
-and, in the opposite direction:
-
-```text
-OTA: written partition: app0
-OTA: boot partition: app0
-OTA: update verified
-OTA: validation successful
-```
-
-After reboot the firmware starts normally and reports the new build/version.
-
-### OTA image
-
-For WebManager OTA updates use:
-
-```text
-firmware/busware-tul-c3-serial-transparent.ota.bin
-```
-
-Do **not** use the factory image for a normal OTA update.
-
-### Factory image
-
-For initial/full flashing use:
-
-```text
-firmware/busware-tul-c3-serial-transparent.factory.bin
-```
-
-The factory image contains the bootloader, partition table, `boot_app0` and the application firmware.
-
-### Manual USB flashing of an application partition
-
-For diagnostic/recovery purposes an application image can be written directly to the desired OTA slot.
-
-`app0`:
-
-```bash
-python3 /root/.platformio/packages/tool-esptoolpy/esptool.py \
-  --chip esp32c3 \
-  --port /dev/ttyACM0 \
-  --baud 460800 \
-  write_flash \
-  0x10000 \
-  Simple/USBSerial/build/busware-tul-c3-serial-transparent/firmware.bin
-```
-
-`app1`:
-
-```bash
-python3 /root/.platformio/packages/tool-esptoolpy/esptool.py \
-  --chip esp32c3 \
-  --port /dev/ttyACM0 \
-  --baud 460800 \
-  write_flash \
-  0x150000 \
-  Simple/USBSerial/build/busware-tul-c3-serial-transparent/firmware.bin
-```
-
-Directly writing an application partition does **not** by itself select that partition as the boot target. For normal firmware deployment, WebManager OTA should be preferred because it writes the inactive slot, validates the image and updates the OTA boot selection.
-
----
-
-## Verified firmware release
-
-The current tested firmware is:
-
-```text
-v1.4+50
-Build: 50
-Git: 2b90699
-```
-
-The firmware image size is approximately:
-
-```text
-861776 bytes
-```
-
-The following have been verified on the ESP32-C3 TUL:
-
-- firmware builds successfully;
-- firmware boots from `app0`;
-- firmware boots from `app1`;
-- WebManager OTA upload succeeds;
-- OTA image validation succeeds;
-- OTA boot-partition switching succeeds;
-- `app0 → app1` update succeeds;
-- `app1 → app0` update succeeds;
-- WiFi reconnects after reboot;
-- WebManager starts normally;
-- USB CDC / TPUART bridge starts normally;
-- KNX traffic counters continue to operate.
-
-This confirms that the A/B OTA mechanism is operational on the tested hardware.
-
-
-## Security note
-
-The current WebOTA authentication credentials are defined in the firmware source code.
-
-For the current development/test version they are:
-
-```text
-Username: admin
-Password: tul
-```
-
-Before wider production deployment, the OTA authentication mechanism should be changed to use a configurable or device-specific credential rather than a common password embedded in the firmware.
-
-WiFi credentials must never be committed to the repository or documented in this README.
-
+Do not commit WiFi credentials or other secrets.
