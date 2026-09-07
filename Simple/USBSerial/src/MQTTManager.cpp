@@ -243,16 +243,6 @@ lastMqttState = mqttClient.state();
 lastError = "";
 
 publishAvailability("online");
-
-publishEvent(
-    "mqtt",
-    "connected"
-);
-
-publishStatus();
-
-lastStatusPublish = millis();
-
 return true;
 
 }
@@ -284,14 +274,16 @@ uint32_t now = millis();
 
 if (now - lastStatusPublish >= STATUS_INTERVAL_MS)
 {
-    bool ok = publishStatus();
+    bool statusOk = publishStatus();
+    bool knxBytesOk = publishKnxBytes();
 
     lastStatusPublish = now;
 
-    if (!ok)
-    {
+    if (!statusOk)
         Serial.println("MQTT: periodic status publish failed");
-    }
+
+    if (!knxBytesOk)
+        Serial.println("MQTT: periodic KNX bytes publish failed");
 }
 }
 
@@ -466,6 +458,42 @@ bool MQTTManager::publishStatus()
         Serial.print(json.length());
         Serial.print(", buffer=1024, state=");
         Serial.println(mqttClient.state());
+    }
+
+    return ok;
+}
+
+
+bool MQTTManager::publishKnxBytes()
+{
+    if (!mqttClient.connected())
+    {
+        return false;
+    }
+
+    uint32_t rx = getKnxRx ? getKnxRx() : 0;
+    uint32_t tx = getKnxTx ? getKnxTx() : 0;
+
+    uint32_t total = rx + tx;
+
+    String t = topic("knx/bytes");
+    String payload = String(total);
+
+    bool ok = mqttClient.publish(
+        t.c_str(),
+        payload.c_str(),
+        true
+    );
+
+    if (ok)
+    {
+        Serial.print("MQTT: KNX bytes published: ");
+        Serial.println(total);
+    }
+    else
+    {
+        Serial.print("MQTT ERROR: KNX bytes publish failed, value=");
+        Serial.println(total);
     }
 
     return ok;

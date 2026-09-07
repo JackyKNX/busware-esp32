@@ -81,7 +81,7 @@ String lastError;
     uint32_t lastStatusPublish;
 
     static const uint32_t CONNECT_INTERVAL_MS = 10000;
-    static const uint32_t STATUS_INTERVAL_MS = 10000;
+    static const uint32_t STATUS_INTERVAL_MS = 60000;
 
     void loadConfig();
 
@@ -89,6 +89,8 @@ String lastError;
 
     void publishAvailability(const char *state);
     bool publishStatus();
+
+    bool publishKnxBytes();
 
     String jsonEscape(const String &value);
     String resetReason();
