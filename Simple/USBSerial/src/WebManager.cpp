@@ -85,9 +85,6 @@ void WebManager::startWiFi()
     WiFi.setHostname(deviceName.c_str());
     WiFi.begin(ssid.c_str(), password.c_str());
 
-    Serial.print("WiFi: connecting to ");
-    Serial.println(ssid);
-
     uint32_t start = millis();
 
     while (WiFi.status() != WL_CONNECTED &&
@@ -100,19 +97,11 @@ void WebManager::startWiFi()
     {
         apMode = false;
 
-        Serial.print("WiFi connected, IP: ");
-        Serial.println(WiFi.localIP());
 
-        if (MDNS.begin(deviceName.c_str()))
-        {
-            Serial.print("mDNS: http://");
-            Serial.print(deviceName);
-            Serial.println(".local/");
-        }
+        MDNS.begin(deviceName.c_str());
     }
     else
     {
-        Serial.println("WiFi: connection failed");
         startAP();
     }
 }
@@ -136,13 +125,6 @@ WiFi.softAP(
     apMode = true;
     apPassword = AP_PASSWORD;
 
-    Serial.println("WiFi: configuration AP started");
-    Serial.print("SSID: ");
-    Serial.println(apName);
-    Serial.print("Password: ");
-    Serial.println(AP_PASSWORD);
-    Serial.print("IP: ");
-    Serial.println(WiFi.softAPIP());
 }
 
 void WebManager::startWebServer()
@@ -229,7 +211,6 @@ server.on("/mqtt/save", HTTP_POST, [this]()
 
     server.begin();
 
-    Serial.println("WebManager: HTTP server started");
 }
 
 void WebManager::loop()
@@ -617,9 +598,6 @@ bool WebManager::connectWiFi(
 
     WiFi.begin(ssid.c_str(), password.c_str());
 
-    Serial.print("WiFi: testing connection to ");
-    Serial.println(ssid);
-
     uint32_t start = millis();
 
     while (WiFi.status() != WL_CONNECTED &&
@@ -630,20 +608,14 @@ bool WebManager::connectWiFi(
 
     if (WiFi.status() == WL_CONNECTED)
     {
-        Serial.print("WiFi: connection successful, IP: ");
-        Serial.println(WiFi.localIP());
 
         if (MDNS.begin(deviceName.c_str()))
         {
-            Serial.print("mDNS: http://");
-            Serial.print(deviceName);
-            Serial.println(".local/");
         }
 
         return true;
     }
 
-    Serial.println("WiFi: connection failed");
 
     return false;
 }
@@ -847,7 +819,6 @@ String WebManager::wifiEncryptionName(uint8_t encryption)
 
 void WebManager::handleWiFiScan()
 {
-    Serial.println("WiFi: scanning networks...");
 
 if (apMode)
     WiFi.mode(WIFI_AP_STA);
@@ -954,9 +925,7 @@ void WebManager::handleWiFiSave()
          */
         if (oldSsid.length() > 0)
         {
-            Serial.println(
-                "WiFi: restoring previous configuration"
-            );
+
 
             connectWiFi(
                 oldSsid,
@@ -1046,9 +1015,7 @@ void WebManager::handleWiFiForget()
     preferences.remove("ssid");
     preferences.remove("password");
 
-    Serial.println(
-        "WiFi: stored configuration removed"
-    );
+
 
     String s =
         htmlHeader("WiFi");
@@ -1357,15 +1324,6 @@ void WebManager::handleUpdateUpload()
         otaFailed = false;
         otaReceived = 0;
 
-        Serial.println();
-        Serial.println("================================");
-        Serial.print("OTA: ");
-        Serial.println(upload.filename);
-
-        Serial.print("OTA: expected size = ");
-        Serial.print(upload.totalSize);
-        Serial.println(" bytes");
-
         /*
          * Validate filename.
          */
@@ -1376,9 +1334,7 @@ void WebManager::handleUpdateUpload()
         {
             otaFailed = true;
 
-            Serial.println(
-                "OTA ERROR: file is not a .bin image"
-            );
+
 
             return;
         }
@@ -1396,32 +1352,24 @@ if (otaPartition == nullptr)
 {
     otaFailed = true;
 
-    Serial.println(
-        "OTA ERROR: no OTA target partition"
-    );
+
 
     return;
 }
-
-Serial.print("OTA: target partition: ");
-Serial.println(otaPartition->label);
-
 
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
         {
             otaFailed = true;
 
-            Serial.print("OTA ERROR: Update.begin failed: ");
-            Update.printError(Serial);
+            
 
             return;
         }
 
         otaStarted = true;
 
-        Serial.println(
-            "OTA: update started"
-        );
+
+
     }
 
     else if (upload.status == UPLOAD_FILE_WRITE)
@@ -1439,11 +1387,9 @@ Serial.println(otaPartition->label);
         {
             otaFailed = true;
 
-            Serial.print(
-                "OTA ERROR: write failed: "
-            );
 
-            Update.printError(Serial);
+
+            
 
             Update.abort();
 
@@ -1455,18 +1401,13 @@ Serial.println(otaPartition->label);
         /*
          * Progress information.
          */
-        Serial.print("OTA: received ");
-        Serial.print(otaReceived);
-        Serial.println(" bytes");
     }
 
     else if (upload.status == UPLOAD_FILE_END)
     {
         if (!otaStarted || otaFailed)
         {
-            Serial.println(
-                "OTA ERROR: upload finished without active update"
-            );
+
 
             return;
         }
@@ -1488,15 +1429,10 @@ if (Update.end(true))
     {
         otaFailed = true;
 
-        Serial.println(
-            "OTA ERROR: OTA partition reference lost"
-        );
+
 
         return;
     }
-
-    Serial.print("OTA: written partition: ");
-    Serial.println(otaPartition->label);
 
     esp_err_t result =
         esp_ota_set_boot_partition(otaPartition);
@@ -1505,10 +1441,7 @@ if (Update.end(true))
     {
         otaFailed = true;
 
-        Serial.print(
-            "OTA ERROR: esp_ota_set_boot_partition failed: "
-        );
-        Serial.println(result);
+
 
         return;
     }
@@ -1516,28 +1449,17 @@ if (Update.end(true))
     const esp_partition_t *boot =
         esp_ota_get_boot_partition();
 
-    Serial.print("OTA: boot partition: ");
-    Serial.println(
-        boot ? boot->label : "NONE"
-    );
 
-    Serial.print("OTA: update verified, ");
-    Serial.print(otaReceived);
-    Serial.println(" bytes");
 
-    Serial.println(
-        "OTA: validation successful"
-    );
+
 }
 else
 {
     otaFailed = true;
 
-    Serial.print(
-        "OTA ERROR: final validation failed: "
-    );
 
-    Update.printError(Serial);
+
+    
     Update.abort();
 }
     }
@@ -1549,13 +1471,9 @@ else
         if (otaStarted)
             Update.abort();
 
-        Serial.println(
-            "OTA: upload aborted"
-        );
 
-        Serial.println(
-            "================================"
-        );
+
+
     }
 }
 

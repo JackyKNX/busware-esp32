@@ -34,8 +34,6 @@ ImprovWiFi improvSerial(&Serial);
 
 #define USB_BAUD 115200
 
-#define STATUS_INTERVAL_MS 10000
-
 #define LED_ACTIVITY_MS 500
 
 
@@ -85,7 +83,6 @@ uint32_t getKnxTx()
 }
 
 // Timing
-uint32_t lastStatus = 0;
 uint32_t lastActivity = 0;
 
 
@@ -186,28 +183,8 @@ mqttManager.begin(
      */
 
 
-    lastStatus = millis();
     lastActivity = millis();
 
-
-#ifdef USE_IMPROV
-
-    Serial.print(WiFi.getHostname());
-
-#else
-
-    Serial.print(MYNAME);
-
-#endif
-
-    Serial.print(" - init succeed - running: ");
-    Serial.print(VERSION);
-    Serial.print(" @ ");
-    Serial.print(getCpuFrequencyMhz());
-    Serial.println(" MHz");
-
-    Serial.println("TPUART: 38400 8E1");
-    Serial.println("USB: CDC");
 }
 
 
@@ -341,38 +318,6 @@ while (Transceiver.available() > 0)
         digitalWrite(LED_BUILTIN, LOW);
         ledActive = false;
     }
-
-
-    /*
-     * ======================================================================
-     * Diagnostic status
-     * ======================================================================
-     *
-     * Only every 10 seconds.
-     *
-     * This is deliberately not part of the bridge protocol.
-     */
-
-    if (millis() - lastStatus >= STATUS_INTERVAL_MS)
-    {
-        lastStatus = millis();
-
-        Serial.print("STATUS usbRx=");
-        Serial.print(usbRx);
-
-        Serial.print(" usbTx=");
-        Serial.print(usbTx);
-
-        Serial.print(" knxRx=");
-        Serial.print(knxRx);
-
-        Serial.print(" knxTx=");
-        Serial.print(knxTx);
-
-        Serial.print(" avail=");
-        Serial.println(Transceiver.available());
-    }
-
 
     /*
      * Make sure the watchdog is serviced even if no traffic exists.

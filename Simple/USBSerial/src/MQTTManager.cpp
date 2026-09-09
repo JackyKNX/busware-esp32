@@ -42,28 +42,14 @@ void MQTTManager::begin(
 
     mqttClient.setServer(host.c_str(), port);
 
-if (!mqttClient.setBufferSize(1024))
-{
-    Serial.println("MQTT ERROR: cannot allocate MQTT buffer");
-}
-else
-{
-    Serial.println("MQTT: packet buffer = 1024 bytes");
-}
+mqttClient.setBufferSize(1024);
 
-
-    Serial.println("MQTT: manager initialized");
 
     if (!enabled)
     {
-        Serial.println("MQTT: disabled");
         return;
     }
 
-    Serial.print("MQTT: broker ");
-    Serial.print(host);
-    Serial.print(":");
-    Serial.println(port);
 }
 
 void MQTTManager::loadConfig()
@@ -197,11 +183,6 @@ bool MQTTManager::connect()
 
     String availabilityTopic = topic("availability");
 
-    Serial.print("MQTT: connecting to ");
-    Serial.print(host);
-    Serial.print(":");
-    Serial.println(port);
-
     mqttClient.setServer(host.c_str(), port);
 
     bool result;
@@ -231,13 +212,10 @@ bool MQTTManager::connect()
 
     if (!result)
     {
-        Serial.print("MQTT: connection failed, state=");
-        Serial.println(mqttClient.state());
 
         return false;
     }
 
-Serial.println("MQTT: connected");
 
 lastMqttState = mqttClient.state();
 lastError = "";
@@ -274,17 +252,12 @@ uint32_t now = millis();
 
 if (now - lastStatusPublish >= STATUS_INTERVAL_MS)
 {
-    bool statusOk = publishStatus();
-    bool knxBytesOk = publishKnxBytes();
+    publishStatus();
+    publishKnxBytes();
 
     lastStatusPublish = now;
-
-    if (!statusOk)
-        Serial.println("MQTT: periodic status publish failed");
-
-    if (!knxBytesOk)
-        Serial.println("MQTT: periodic KNX bytes publish failed");
 }
+
 }
 
 void MQTTManager::publishAvailability(const char *state)
@@ -447,17 +420,11 @@ bool MQTTManager::publishStatus()
     {
         lastError = "";
 
-        Serial.print("MQTT: status published, bytes=");
-        Serial.println(json.length());
     }
     else
     {
         lastError = "MQTT status publish failed";
 
-        Serial.print("MQTT ERROR: status publish failed, bytes=");
-        Serial.print(json.length());
-        Serial.print(", buffer=1024, state=");
-        Serial.println(mqttClient.state());
     }
 
     return ok;
@@ -484,17 +451,6 @@ bool MQTTManager::publishKnxBytes()
         payload.c_str(),
         true
     );
-
-    if (ok)
-    {
-        Serial.print("MQTT: KNX bytes published: ");
-        Serial.println(total);
-    }
-    else
-    {
-        Serial.print("MQTT ERROR: KNX bytes publish failed, value=");
-        Serial.println(total);
-    }
 
     return ok;
 }
