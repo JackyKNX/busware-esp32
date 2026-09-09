@@ -2,7 +2,8 @@
 
 Modified `USBSerial` firmware for **BUSWARE TUL / ESP32-C3 + NCN5130 TPUART**.
 
-The ESP32-C3 acts as a **transparent USB CDC ↔ KNX TPUART bridge**. KNX protocol handling remains on Linux in `knxd`.
+The ESP32-C3 acts as a **transparent USB CDC ↔ KNX TPUART bridge**. KNX
+protocol handling remains on Linux in `knxd`.
 
 ```text
 KNX TP
@@ -39,14 +40,28 @@ Tested `knxd` configuration:
 - transparent bidirectional USB ↔ TPUART forwarding
 - USB/KNX traffic counters and activity LED
 - WiFi management and configuration AP
-- WebManager with health/diagnostic information
+- WebManager with health and diagnostic information
 - Web OTA firmware update with A/B partition switching
 - browser serial monitor
 - MQTT status and diagnostics
 - automatic firmware versioning and build numbering
 - mDNS
 
-The ESP32 does **not** implement the KNX application layer. `knxd` handles KNX protocol processing.
+The ESP32 does **not** implement the KNX application layer. `knxd` handles
+KNX protocol processing.
+
+## Important: USB Serial is the KNX transport
+
+In the `busware-tul-c3-serial-transparent` build, the USB CDC `Serial`
+interface is the transparent KNX transport channel.
+
+**Do not write debug or diagnostic messages to `Serial`.**
+
+Any text written to `Serial` becomes part of the KNX transport stream and can
+corrupt communication with `knxd`.
+
+WebManager, MQTT and other diagnostics therefore use separate logging
+mechanisms and must not write diagnostic text to the USB transport stream.
 
 ## Build
 
@@ -64,7 +79,8 @@ firmware/busware-tul-c3-serial-transparent.factory.bin
 firmware/busware-tul-c3-serial-transparent.ota.bin
 ```
 
-Use the factory image for initial/full flashing and the OTA image for normal WebManager updates.
+Use the factory image for initial/full flashing and the OTA image for normal
+WebManager updates.
 
 ## KNX / Linux integration
 
@@ -75,6 +91,9 @@ Example:
 ```text
 ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", KERNELS=="<USB_PORT>", SYMLINK+="knx1", OWNER="knxd", GROUP="dialout", MODE="0660"
 ```
+
+Replace `<USB_PORT>` with the stable USB port identifier obtained with
+`udevadm info`.
 
 Then:
 
@@ -98,13 +117,24 @@ Open:
 http://<ESP32-IP>/
 ```
 
-The WebManager provides firmware/version information, WiFi SSID/IP/RSSI, system health, USB/KNX counters, MQTT diagnostics, WiFi/MQTT configuration, OTA update, serial monitor and restart.
+The WebManager provides:
+
+- firmware and version information
+- WiFi SSID, IP and RSSI
+- system health
+- USB/KNX counters
+- MQTT diagnostics
+- WiFi configuration
+- MQTT configuration
+- OTA firmware update
+- browser serial monitor
+- ESP32 restart
 
 ### WiFi
 
 Credentials are stored in ESP32 NVS and survive normal OTA updates.
 
-If no WiFi configuration exists, the TUL starts:
+If no WiFi configuration exists, the TUL starts a configuration access point:
 
 ```text
 SSID: TUL-XXXXXX
@@ -112,11 +142,18 @@ Password: tulsetup
 IP: 192.168.4.1
 ```
 
-Open `http://192.168.4.1/` and select **WiFi configuration**.
+Open:
+
+```text
+http://192.168.4.1/
+```
+
+and select **WiFi configuration**.
 
 ## MQTT
 
-MQTT is an optional **management/telemetry** channel. It does not replace the KNX USB path.
+MQTT is an optional **management/telemetry** channel. It does not replace
+the KNX USB transport path.
 
 Configure MQTT at:
 
@@ -132,7 +169,7 @@ Parameters:
 - username/password
 - base topic
 
-Default:
+Default base topic:
 
 ```text
 busware/TUL
@@ -145,17 +182,36 @@ busware/TUL/availability
 busware/TUL/status
 busware/TUL/event
 busware/TUL/error
+busware/TUL/knx/bytes
 ```
 
-`availability` uses retained `online/offline` state and MQTT LWT.
+### Availability
 
-`status` is retained JSON containing firmware, uptime, IP, SSID, RSSI, USB/KNX counters, heap and reset reason.
+`availability` uses retained `online/offline` state and MQTT Last Will and
+Testament (LWT).
+
+### Status
+
+`status` is a retained JSON message published every 60 seconds.
+
+It contains:
+
+- firmware version
+- uptime
+- IP address
+- SSID
+- RSSI
+- USB RX/TX counters
+- KNX RX/TX counters
+- free heap
+- minimum free heap
+- reset reason
 
 Example:
 
 ```json
 {
-  "firmware": "v1.4+50",
+  "firmware": "v1.4+65",
   "uptime": 123456,
   "ip": "10.192.160.57",
   "ssid": "Centralna",
@@ -170,20 +226,51 @@ Example:
 }
 ```
 
-`event` is a non-retained event stream. `error` stores the last reported error as a retained message.
+The exact firmware version and runtime values depend on the running device.
+
+### KNX byte counter
+
+```text
+busware/TUL/knx/bytes
+```
+
+This is a retained numeric value containing:
+
+```text
+KNX RX bytes + KNX TX bytes
+```
+
+The counter represents transported KNX bytes, not telegram count.
+
+### Events
+
+```text
+busware/TUL/event
+```
+
+`event` is a non-retained event stream for significant device events.
+
+### Errors
+
+```text
+busware/TUL/error
+```
+
+`error` stores the last reported error as a retained message.
 
 ## OTA / A-B update
 
-The TUL uses:
+The TUL uses two application partitions:
 
 ```text
 0x10000   app0   1280K
 0x150000  app1   1280K
 ```
 
-Normal WebManager OTA writes the inactive slot, verifies the image and selects it for the next boot.
+Normal WebManager OTA writes the inactive slot, completes the update and
+selects it for the next boot.
 
-Tested both directions:
+Both directions have been tested:
 
 ```text
 app0 → app1 → reboot → app1
@@ -204,7 +291,9 @@ Open:
 /serial
 ```
 
-It is a diagnostic view of raw TPUART traffic.
+The Serial Monitor provides a diagnostic view of raw TPUART traffic.
+
+It does not write diagnostic text into the USB transport stream.
 
 ## Firmware versioning
 
@@ -226,7 +315,21 @@ Version format:
 v<major.minor>+<build>
 ```
 
-The build counter is stored in `.buildcounter` and excluded from Git. `version.h` should not be edited manually.
+For example:
+
+```text
+v1.4+65
+```
+
+The build counter is stored in:
+
+```text
+.buildcounter
+```
+
+and excluded from Git.
+
+`version.h` should not be edited manually.
 
 ## Tested
 
@@ -242,8 +345,12 @@ Tested with:
 - BUSWARE TUL / NCN5130 TPUART
 - PlatformIO / Espressif32 7.0.1
 - Arduino-ESP32
-- `knxd 0.14.75`
+- `welteki/knxd:latest`
 - real KNX traffic in both directions
+- ETS device discovery and programming
+
+The bridge has been tested with normal KNX traffic while MQTT diagnostics
+were active.
 
 ## Project origin
 
@@ -251,10 +358,14 @@ Based on the original **BUSWARE ESP32** project:
 
 https://github.com/tostmann/busware-esp32
 
-This fork adds the TUL / ESP32-C3 TPUART USB bridge, WebManager, OTA handling, diagnostics and MQTT telemetry.
+This fork adds the TUL / ESP32-C3 TPUART USB bridge, WebManager, OTA
+handling, diagnostics and MQTT telemetry.
 
 ## Security
 
-Current development/test WebOTA credentials are defined in the firmware source. Replace the common embedded credentials before wider deployment.
+WebManager OTA authentication currently uses development/test credentials
+embedded in the firmware source.
 
-Do not commit WiFi credentials or other secrets.
+These credentials must be changed before production deployment.
+
+Do not commit WiFi credentials, MQTT passwords or other secrets.
